@@ -1,0 +1,18 @@
+erDiagram
+    PRODUTOS ||--o{ MOVIMENTACOES : "possui"
+    PRODUTOS {
+        int id PK
+        string nome
+        string categoria
+        int quantidade
+        int estoque_minimo
+        decimal preco
+        datetime data_cadastro
+    }
+    MOVIMENTACOES {
+        int id PK
+        int produto_id FK
+        string tipo "Entrada | Saida"
+        int quantidade
+        datetime data
+    }

@@ -1,0 +1,52 @@
+Etapa 4.2 — Documento de Levantamento de Requisitos
+1. Objetivo do Sistema
+
+Desenvolver a SmartStock, uma plataforma web corporativa voltada à gestão inteligente de estoque.
+
+O sistema tem como objetivo centralizar o controle de produtos, automatizar o registro de entradas e saídas, monitorar os níveis mínimos de estoque e fornecer indicadores gerenciais em tempo real. Além disso, sua arquitetura será preparada para futuras integrações com ferramentas de automação e Inteligência Artificial.
+
+2. Problema que Será Resolvido
+
+Empresas que realizam o gerenciamento de estoque manualmente ou por meio de planilhas isoladas enfrentam diversos problemas, como:
+
+Falta de controle e rastreabilidade das entradas e saídas de mercadorias.
+Perdas financeiras e falta de produtos em estoque devido à ausência de alertas antecipados de reposição.
+Informações descentralizadas, dificultando a visualização geral da operação.
+Lentidão e ocorrência de erros humanos na organização dos dados e na elaboração de relatórios gerenciais.
+
+A SmartStock busca solucionar esses problemas por meio da centralização das informações e da automatização dos principais processos de controle de estoque.
+
+3. Público-Alvo
+Gestores e supervisores de estoque e logística: necessitam de uma visão geral da operação, por meio de dashboards e relatórios, para auxiliar na tomada de decisões e no planejamento de compras.
+Operadores de estoque e almoxarifado: responsáveis pelo cadastro de produtos e pelo registro diário das movimentações de entrada e saída.
+Pequenas e médias empresas (PMEs): empresas comerciais, distribuidoras e lojas virtuais que precisam aprimorar o controle de inventário sem depender de sistemas complexos.
+4. Funcionalidades do Sistema
+4.1 Requisitos Funcionais
+
+RF01 — Autenticação: Disponibilizar uma tela de login para permitir o acesso seguro à plataforma.
+
+RF02 — Gestão de Produtos (CRUD): Permitir o cadastro, a consulta, a atualização e a exclusão de produtos, incluindo informações como nome, categoria, quantidade, estoque mínimo, preço e data de cadastro.
+
+RF03 — Movimentação de Estoque: Permitir o registro de entradas e saídas de produtos, atualizando automaticamente as quantidades disponíveis no estoque.
+
+RF04 — Controle de Estoque Mínimo e Alertas: Monitorar automaticamente os produtos que atingirem ou ficarem abaixo do limite mínimo configurado, exibindo alertas para indicar a necessidade de reposição.
+
+RF05 — Dashboard Gerencial: Disponibilizar um painel com indicadores operacionais, como quantidade total de produtos, itens com estoque baixo, movimentações recentes e valor total do estoque.
+
+RF06 — Relatórios Operacionais: Permitir a geração e a visualização de relatórios consolidados sobre os produtos disponíveis e as movimentações realizadas.
+
+RF07 — Configurações do Sistema: Disponibilizar opções para gerenciamento das informações da conta e das preferências básicas da plataforma.
+
+RF08 — Preparação para Integração com Inteligência Artificial: Estruturar a arquitetura do sistema para possibilitar futuras integrações com agentes de Inteligência Artificial por meio da ferramenta n8n, permitindo consultas em linguagem natural e automação de processos.
+
+4.2 Requisitos Não Funcionais
+
+RNF01 — Usabilidade: A plataforma deverá apresentar uma interface limpa, intuitiva e responsiva, seguindo boas práticas de UX/UI e proporcionando uma experiência simples e eficiente aos usuários.
+
+RNF02 — Arquitetura Desacoplada: O sistema deverá possuir separação entre Front-end, API Back-end e Banco de Dados, permitindo a comunicação independente entre os componentes e facilitando futuras integrações com ferramentas externas, como n8n e agentes de Inteligência Artificial.
+
+5. Benefícios da Solução
+Centralização e Confiabilidade: Reunir todas as informações do inventário em uma única plataforma, reduzindo divergências e inconsistências nos registros.
+Prevenção de Rupturas: Reduzir perdas causadas pela falta de produtos por meio do monitoramento dos níveis de estoque e de alertas de reposição.
+Agilidade Operacional: Facilitar o registro de movimentações e disponibilizar indicadores e relatórios de forma rápida.
+Escalabilidade: Preparar a estrutura do sistema para receber futuras integrações, automações e recursos de Inteligência Artificial, sem exigir alterações profundas na estrutura principal da aplicação.

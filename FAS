@@ -1,0 +1,13 @@
+flowchart LR
+    subgraph Interacao_Humana [Interação Humana]
+        U[Usuário] --> FE[Front-end Web]
+        FE --> API1[API REST]
+    end
+
+    subgraph Interacao_Autonoma [Interação Autônoma - Futura]
+        IA[Agente de IA] <--> N8N[Orquestrador N8N]
+        N8N <--> API2[API REST]
+    end
+
+    API1 <--> DB[(Banco de Dados)]
+    API2 <--> DB

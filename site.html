@@ -1,0 +1,2579 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SmartStock — Gestão Inteligente de Estoque</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Google Fonts: Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+          },
+          colors: {
+            brand: {
+              950: '#09090B',
+              900: '#18181B',
+              800: '#27272A',
+              700: '#3F3F46',
+              600: '#52525B',
+              500: '#71717A',
+              400: '#A1A1AA',
+              300: '#D4D4D8',
+              200: '#E4E4E7',
+              100: '#F4F4F5',
+              50: '#FAFAFA',
+            }
+          }
+        }
+      }
+    };
+  </script>
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: #FAFAFA;
+      color: #18181B;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Custom subtle scrollbar */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #D4D4D8;
+      border-radius: 9999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #A1A1AA;
+    }
+
+    /* Print rules for Reports */
+    @media print {
+      .no-print {
+        display: none !important;
+      }
+      body {
+        background: #FFFFFF !important;
+      }
+      #main-content {
+        padding: 0 !important;
+        margin: 0 !important;
+        width: 100% !important;
+      }
+    }
+
+    /* Smooth transitions */
+    .fade-in {
+      animation: fadeIn 0.2s ease-out forwards;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body class="bg-[#FAFAFA] text-[#18181B] selection:bg-[#18181B] selection:text-white overflow-x-hidden">
+
+  <!-- Root Application Container -->
+  <div id="app" class="min-h-screen flex flex-col"></div>
+
+  <!-- Global Modal Container -->
+  <div id="modal-root" class="fixed inset-0 z-50 hidden items-center justify-center p-4 bg-black/40 backdrop-blur-[1px] transition-opacity"></div>
+
+  <!-- Global Toast Container -->
+  <div id="toast-root" class="fixed bottom-5 right-5 z-[60] flex flex-col gap-2 max-w-sm w-full pointer-events-none"></div>
+
+  <script>
+    /**
+     * ============================================================================
+     * SMARTSTOCK FRONT-END ARCHITECTURE
+     * Modular Vanilla JS Application:
+     * 1. Utils: Formatters (Currency, Dates, CSV Export)
+     * 2. Store: Centralized Reactive State & localStorage Persistence
+     * 3. Components: Reusable UI Primitives (Sidebar, Header, KPIs, Modals, Toasts)
+     * 4. Views: Login, Dashboard, Products, Movements, Alerts, Reports, Settings
+     * 5. Router/App: View Orchestration & Event Delegation
+     * ============================================================================
+     */
+
+    // ============================================================================
+    // 1. UTILS
+    // ============================================================================
+    const Utils = {
+      formatCurrency(value) {
+        return new Intl.NumberFormat('pt-BR', {
+          style: 'currency',
+          currency: 'BRL'
+        }).format(Number(value) || 0);
+      },
+
+      formatNumber(value) {
+        return new Intl.NumberFormat('pt-BR').format(Number(value) || 0);
+      },
+
+      generateId(prefix = 'ID') {
+        return `${prefix}-${Date.now().toString(36).toUpperCase()}-${Math.floor(Math.random() * 1000)}`;
+      },
+
+      escapeHtml(str) {
+        if (str === null || str === undefined) return '';
+        return String(str)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#039;');
+      },
+
+      formatDateTimeNow() {
+        const now = new Date();
+        const months = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+        const day = String(now.getDate()).padStart(2, '0');
+        const month = months[now.getMonth()];
+        const hours = String(now.getHours()).padStart(2, '0');
+        const minutes = String(now.getMinutes()).padStart(2, '0');
+        return `${day} ${month}, ${hours}:${minutes}`;
+      },
+
+      downloadCSV(filename, headers, rows) {
+        const csvContent = [
+          headers.join(';'),
+          ...rows.map(row => row.map(cell => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(';'))
+        ].join('\n');
+
+        const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', filename);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      }
+    };
+
+    // ============================================================================
+    // 2. STORE & INITIAL SEED DATA (Fiel ao protótipo image_5086ad.png)
+    // ============================================================================
+    const SEED_DATA = {
+      products: [
+        {
+          id: 'prod-1',
+          sku: 'LUV-001',
+          name: 'Luvas de proteção',
+          category: 'EPI & Segurança',
+          price: 42.50,
+          quantity: 8,
+          minStock: 30,
+          unit: 'un.'
+        },
+        {
+          id: 'prod-2',
+          sku: 'PAP-034',
+          name: 'Papel A4 - 500 folhas',
+          category: 'Escritório',
+          price: 28.90,
+          quantity: 12,
+          minStock: 25,
+          unit: 'un.'
+        },
+        {
+          id: 'prod-3',
+          sku: 'FIT-012',
+          name: 'Fita de embalagem',
+          category: 'Expedição',
+          price: 14.20,
+          quantity: 18,
+          minStock: 40,
+          unit: 'un.'
+        },
+        {
+          id: 'prod-4',
+          sku: 'ALC-088',
+          name: 'Álcool 70% - 1 litro',
+          category: 'Limpeza & Higiene',
+          price: 12.50,
+          quantity: 64,
+          minStock: 20,
+          unit: 'un.'
+        },
+        {
+          id: 'prod-5',
+          sku: 'NBK-102',
+          name: 'Notebook Corporativo Pro 15"',
+          category: 'TI & Hardware',
+          price: 4850.00,
+          quantity: 32,
+          minStock: 10,
+          unit: 'un.'
+        },
+        {
+          id: 'prod-6',
+          sku: 'MON-204',
+          name: 'Monitor LED 27" IPS 4K',
+          category: 'TI & Hardware',
+          price: 1890.00,
+          quantity: 45,
+          minStock: 15,
+          unit: 'un.'
+        },
+        {
+          id: 'prod-7',
+          sku: 'CAD-310',
+          name: 'Cadeira Ergonômica Mesh',
+          category: 'Mobiliário',
+          price: 1120.00,
+          quantity: 28,
+          minStock: 10,
+          unit: 'un.'
+        },
+        {
+          id: 'prod-8',
+          sku: 'TON-415',
+          name: 'Cartucho Toner Laser Preto',
+          category: 'Suprimentos TI',
+          price: 310.00,
+          quantity: 6,
+          minStock: 15,
+          unit: 'un.'
+        },
+        {
+          id: 'prod-9',
+          sku: 'CXA-502',
+          name: 'Caixa Papelão Reforçada 40x30',
+          category: 'Expedição',
+          price: 6.80,
+          quantity: 14,
+          minStock: 50,
+          unit: 'un.'
+        },
+        {
+          id: 'prod-10',
+          sku: 'CAP-610',
+          name: 'Capacete de Segurança Classe B',
+          category: 'EPI & Segurança',
+          price: 54.00,
+          quantity: 9,
+          minStock: 20,
+          unit: 'un.'
+        }
+      ],
+      movements: [
+        {
+          id: 'mov-1',
+          productId: 'prod-1',
+          productName: 'Luvas de proteção',
+          productSku: 'LUV-001',
+          type: 'entrada',
+          quantity: 120,
+          unit: 'un.',
+          responsible: 'Ana Souza',
+          date: '17 nov, 10:42',
+          reference: 'NF-00482',
+          notes: 'Reposição mensal fornecedor EPI'
+        },
+        {
+          id: 'mov-2',
+          productId: 'prod-2',
+          productName: 'Papel A4 - 500 folhas',
+          productSku: 'PAP-034',
+          type: 'saida',
+          quantity: 24,
+          unit: 'un.',
+          responsible: 'Carlos Lima',
+          date: '17 nov, 10:18',
+          reference: 'REQ-0129',
+          notes: 'Requisição setor administrativo'
+        },
+        {
+          id: 'mov-3',
+          productId: 'prod-3',
+          productName: 'Fita de embalagem',
+          productSku: 'FIT-012',
+          type: 'entrada',
+          quantity: 90,
+          unit: 'un.',
+          responsible: 'Ana Souza',
+          date: '17 nov, 09:56',
+          reference: 'NF-00481',
+          notes: 'Recebimento doca 02'
+        },
+        {
+          id: 'mov-4',
+          productId: 'prod-4',
+          productName: 'Álcool 70% - 1 litro',
+          productSku: 'ALC-088',
+          type: 'saida',
+          quantity: 12,
+          unit: 'un.',
+          responsible: 'Mariana Costa',
+          date: '17 nov, 09:30',
+          reference: 'REQ-0127',
+          notes: 'Abastecimento dispensadores'
+        },
+        {
+          id: 'mov-5',
+          productId: 'prod-5',
+          productName: 'Notebook Corporativo Pro 15"',
+          productSku: 'NBK-102',
+          type: 'entrada',
+          quantity: 10,
+          unit: 'un.',
+          responsible: 'Roberto Alves',
+          date: '16 nov, 16:15',
+          reference: 'NF-00479',
+          notes: 'Expansão equipe engenharia'
+        },
+        {
+          id: 'mov-6',
+          productId: 'prod-6',
+          productName: 'Monitor LED 27" IPS 4K',
+          productSku: 'MON-204',
+          type: 'saida',
+          quantity: 5,
+          unit: 'un.',
+          responsible: 'Carlos Lima',
+          date: '16 nov, 14:05',
+          reference: 'REQ-0124',
+          notes: 'Setup novas estações'
+        }
+      ],
+      weeklyFlow: [
+        { day: '11 nov', entradas: 12, saidas: 8 },
+        { day: '12 nov', entradas: 18, saidas: 6 },
+        { day: '13 nov', entradas: 10, saidas: 12 },
+        { day: '14 nov', entradas: 22, saidas: 10 },
+        { day: '15 nov', entradas: 8, saidas: 7 },
+        { day: '16 nov', entradas: 16, saidas: 12 },
+        { day: '17 nov', entradas: 12, saidas: 9 }
+      ]
+    };
+
+    const Store = {
+      STORAGE_KEY: 'smartstock_v1_state',
+      state: {
+        isAuthenticated: false,
+        user: {
+          name: 'Administrador',
+          role: 'Gestão de estoque',
+          email: 'admin@smartstock.com.br'
+        },
+        currentRoute: 'dashboard', // 'dashboard' | 'products' | 'movements' | 'alerts' | 'reports'
+        mobileMenuOpen: false,
+        notificationsOpen: false,
+        globalSearch: '',
+        productFilters: {
+          search: '',
+          category: 'all',
+          status: 'all' // 'all' | 'low' | 'normal'
+        },
+        movementFilters: {
+          search: '',
+          type: 'all' // 'all' | 'entrada' | 'saida'
+        },
+        reportTab: 'all', // 'all' | 'low' | 'summary'
+        products: [],
+        movements: [],
+        weeklyFlow: []
+      },
+
+      init() {
+        try {
+          const saved = localStorage.getItem(this.STORAGE_KEY);
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            this.state.isAuthenticated = Boolean(parsed.isAuthenticated);
+            this.state.user = parsed.user || this.state.user;
+            this.state.products = Array.isArray(parsed.products) ? parsed.products : structuredClone(SEED_DATA.products);
+            this.state.movements = Array.isArray(parsed.movements) ? parsed.movements : structuredClone(SEED_DATA.movements);
+            this.state.weeklyFlow = Array.isArray(parsed.weeklyFlow) ? parsed.weeklyFlow : structuredClone(SEED_DATA.weeklyFlow);
+          } else {
+            this.resetToDemo(false);
+          }
+        } catch (err) {
+          console.error('Erro ao carregar localStorage:', err);
+          this.resetToDemo(false);
+        }
+      },
+
+      save() {
+        try {
+          const payload = {
+            isAuthenticated: this.state.isAuthenticated,
+            user: this.state.user,
+            products: this.state.products,
+            movements: this.state.movements,
+            weeklyFlow: this.state.weeklyFlow
+          };
+          localStorage.setItem(this.STORAGE_KEY, JSON.stringify(payload));
+        } catch (err) {
+          console.error('Erro ao salvar estado:', err);
+        }
+      },
+
+      resetToDemo(rerender = true) {
+        this.state.products = structuredClone(SEED_DATA.products);
+        this.state.movements = structuredClone(SEED_DATA.movements);
+        this.state.weeklyFlow = structuredClone(SEED_DATA.weeklyFlow);
+        this.save();
+        if (rerender) {
+          Components.showToast('Dados demonstrativos restaurados com sucesso.');
+          App.render();
+        }
+      },
+
+      // Auth Actions
+      login(email) {
+        this.state.isAuthenticated = true;
+        if (email) {
+          this.state.user.email = email;
+        }
+        this.save();
+        App.render();
+      },
+
+      logout() {
+        this.state.isAuthenticated = false;
+        this.state.mobileMenuOpen = false;
+        this.state.notificationsOpen = false;
+        this.save();
+        App.render();
+      },
+
+      // Navigation
+      navigate(route) {
+        this.state.currentRoute = route;
+        this.state.mobileMenuOpen = false;
+        this.state.notificationsOpen = false;
+        App.render();
+      },
+
+      // Computed Getters
+      getLowStockProducts() {
+        return this.state.products.filter(p => Number(p.quantity) < Number(p.minStock));
+      },
+
+      getTotalStockValue() {
+        return this.state.products.reduce((acc, p) => acc + (Number(p.quantity) * Number(p.price)), 0);
+      },
+
+      getTotalUnitsInStock() {
+        return this.state.products.reduce((acc, p) => acc + Number(p.quantity), 0);
+      },
+
+      getCategories() {
+        return [...new Set(this.state.products.map(p => p.category))].sort();
+      },
+
+      // Product CRUD
+      addProduct(productData) {
+        const newProduct = {
+          id: Utils.generateId('PROD'),
+          sku: productData.sku.trim().toUpperCase(),
+          name: productData.name.trim(),
+          category: productData.category.trim(),
+          price: Number(productData.price),
+          quantity: Number(productData.quantity),
+          minStock: Number(productData.minStock),
+          unit: productData.unit.trim() || 'un.'
+        };
+        this.state.products.unshift(newProduct);
+        this.save();
+        Components.showToast(`Produto "${newProduct.name}" cadastrado com sucesso.`);
+        App.render();
+      },
+
+      updateProduct(id, updatedData) {
+        const idx = this.state.products.findIndex(p => p.id === id);
+        if (idx === -1) return;
+        this.state.products[idx] = {
+          ...this.state.products[idx],
+          sku: updatedData.sku.trim().toUpperCase(),
+          name: updatedData.name.trim(),
+          category: updatedData.category.trim(),
+          price: Number(updatedData.price),
+          quantity: Number(updatedData.quantity),
+          minStock: Number(updatedData.minStock),
+          unit: updatedData.unit.trim() || 'un.'
+        };
+        this.save();
+        Components.showToast(`Produto "${this.state.products[idx].name}" atualizado.`);
+        App.render();
+      },
+
+      deleteProduct(id) {
+        const prod = this.state.products.find(p => p.id === id);
+        if (!prod) return;
+        this.state.products = this.state.products.filter(p => p.id !== id);
+        this.save();
+        Components.showToast(`Produto "${prod.name}" removido do catálogo.`);
+        App.render();
+      },
+
+      // Stock Movement
+      registerMovement({ productId, type, quantity, responsible, reference, notes }) {
+        const prodIndex = this.state.products.findIndex(p => p.id === productId);
+        if (prodIndex === -1) {
+          return { ok: false, error: 'Produto selecionado não encontrado.' };
+        }
+
+        const prod = this.state.products[prodIndex];
+        const qty = Number(quantity);
+
+        if (qty <= 0 || isNaN(qty)) {
+          return { ok: false, error: 'Informe uma quantidade válida maior que zero.' };
+        }
+
+        if (type === 'saida' && qty > prod.quantity) {
+          return {
+            ok: false,
+            error: `Saldo insuficiente! Disponível em estoque: ${prod.quantity} ${prod.unit}.`
+          };
+        }
+
+        // Update stock balance
+        if (type === 'entrada') {
+          prod.quantity = Number(prod.quantity) + qty;
+        } else {
+          prod.quantity = Number(prod.quantity) - qty;
+        }
+
+        // Record movement
+        const movement = {
+          id: Utils.generateId('MOV'),
+          productId: prod.id,
+          productName: prod.name,
+          productSku: prod.sku,
+          type,
+          quantity: qty,
+          unit: prod.unit,
+          responsible: responsible.trim() || this.state.user.name,
+          date: Utils.formatDateTimeNow(),
+          reference: reference.trim().toUpperCase() || (type === 'entrada' ? `NF-${Math.floor(10000 + Math.random() * 89999)}` : `REQ-${Math.floor(1000 + Math.random() * 8999)}`),
+          notes: notes ? notes.trim() : ''
+        };
+
+        this.state.movements.unshift(movement);
+
+        // Update last bar of weekly chart to reflect real-time activity
+        if (this.state.weeklyFlow.length > 0) {
+          const todayBar = this.state.weeklyFlow[this.state.weeklyFlow.length - 1];
+          if (type === 'entrada') {
+            todayBar.entradas += Math.max(1, Math.round(qty / 5));
+          } else {
+            todayBar.saidas += Math.max(1, Math.round(qty / 5));
+          }
+        }
+
+        this.save();
+        Components.showToast(
+          `${type === 'entrada' ? 'Entrada' : 'Saída'} de ${qty} ${prod.unit} (${prod.sku}) registrada!`
+        );
+        App.render();
+        return { ok: true };
+      }
+    };
+
+    // ============================================================================
+    // 3. REUSABLE UI COMPONENTS
+    // ============================================================================
+    const Components = {
+      renderBrandLogo(size = 'md') {
+        const boxClass = size === 'lg' ? 'w-10 h-10 rounded-xl' : 'w-8 h-8 rounded-lg';
+        const iconSize = size === 'lg' ? 'w-5 h-5' : 'w-4 h-4';
+        const textClass = size === 'lg' ? 'text-xl' : 'text-[17px]';
+        return `
+          <div class="flex items-center gap-2.5 select-none">
+            <div class="${boxClass} bg-[#18181B] text-white flex items-center justify-center shadow-sm shrink-0">
+              <i data-lucide="box" class="${iconSize} stroke-[2.2]"></i>
+            </div>
+            <span class="${textClass} font-bold tracking-tight text-[#18181B]">SmartStock</span>
+          </div>
+        `;
+      },
+
+      renderBadge(text, variant = 'neutral') {
+        const styles = {
+          neutral: 'bg-[#F4F4F5] text-[#52525B] border-[#E4E4E7]',
+          dark: 'bg-[#18181B] text-white border-[#18181B]',
+          warning: 'bg-amber-50 text-amber-800 border-amber-200',
+          danger: 'bg-red-50 text-red-700 border-red-200',
+          success: 'bg-emerald-50 text-emerald-700 border-emerald-200'
+        };
+        return `
+          <span class="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium border ${styles[variant] || styles.neutral}">
+            ${Utils.escapeHtml(text)}
+          </span>
+        `;
+      },
+
+      renderKpiCard({ title, value, icon, subLeft, subRight, highlight = false }) {
+        return `
+          <div class="bg-white border border-[#E5E7EB] rounded-xl p-5 flex flex-col justify-between transition-all hover:border-[#D4D4D8]">
+            <div class="flex items-center justify-between gap-2 mb-3">
+              <span class="text-[13px] font-medium text-[#71717A]">${Utils.escapeHtml(title)}</span>
+              <div class="text-[#71717A]">
+                <i data-lucide="${icon}" class="w-4 h-4 stroke-[1.8]"></i>
+              </div>
+            </div>
+            <div class="text-2xl sm:text-[26px] font-bold tracking-tight text-[#18181B] mb-2.5">
+              ${Utils.escapeHtml(value)}
+            </div>
+            <div class="flex items-center justify-between gap-2 text-xs">
+              <span class="${highlight ? 'font-semibold text-[#18181B]' : 'font-medium text-[#52525B]'}">${subLeft}</span>
+              <span class="text-[#71717A] truncate">${subRight}</span>
+            </div>
+          </div>
+        `;
+      },
+
+      renderSidebar() {
+        const lowCount = Store.getLowStockProducts().length;
+        const route = Store.state.currentRoute;
+
+        const navItems = [
+          { id: 'dashboard', label: 'Visão geral', icon: 'layout-grid' },
+          { id: 'products', label: 'Produtos', icon: 'package' },
+          { id: 'movements', label: 'Movimentações', icon: 'arrow-left-right' },
+          { id: 'alerts', label: 'Alertas de estoque', icon: 'bell', badge: lowCount > 0 ? lowCount : null },
+          { id: 'reports', label: 'Relatórios', icon: 'bar-chart-2' }
+        ];
+
+        const sidebarContent = `
+          <div class="flex flex-col h-full bg-white border-r border-[#E5E7EB] w-64 select-none">
+            <!-- Brand Header -->
+            <div class="h-16 px-5 flex items-center justify-between border-b border-transparent">
+              <button onclick="Store.navigate('dashboard')" class="focus:outline-none">
+                ${this.renderBrandLogo('md')}
+              </button>
+              <button onclick="App.toggleMobileMenu(false)" class="lg:hidden p-1.5 rounded-lg text-[#71717A] hover:bg-[#F4F4F5]">
+                <i data-lucide="x" class="w-5 h-5"></i>
+              </button>
+            </div>
+
+            <!-- Navigation Menu -->
+            <div class="flex-1 px-3.5 py-3 overflow-y-auto flex flex-col justify-between gap-6">
+              <div>
+                <div class="px-2.5 mb-2 text-[10px] font-semibold uppercase tracking-wider text-[#A1A1AA]">
+                  GESTÃO DE ESTOQUE
+                </div>
+                <nav class="space-y-1">
+                  ${navItems.map(item => {
+                    const isActive = route === item.id;
+                    return `
+                      <button
+                        onclick="Store.navigate('${item.id}')"
+                        class="w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-[13px] font-medium transition-colors ${
+                          isActive
+                            ? 'bg-[#18181B] text-white shadow-xs'
+                            : 'text-[#52525B] hover:bg-[#F4F4F5] hover:text-[#18181B]'
+                        }"
+                      >
+                        <span class="flex items-center gap-2.5">
+                          <i data-lucide="${item.icon}" class="w-4 h-4 ${isActive ? 'text-white' : 'text-[#71717A]'}"></i>
+                          <span>${item.label}</span>
+                        </span>
+                        ${item.badge !== null && item.badge !== undefined ? `
+                          <span class="px-1.5 py-0.5 text-[11px] font-semibold rounded-md ${
+                            isActive ? 'bg-white/20 text-white' : 'bg-[#F4F4F5] text-[#18181B] border border-[#E4E4E7]'
+                          }">
+                            ${item.badge}
+                          </span>
+                        ` : ''}
+                      </button>
+                    `;
+                  }).join('')}
+                </nav>
+
+                <!-- Intelligence Section (Arquitetura N8N Dia 9) -->
+                <div class="mt-6">
+                  <div class="px-2.5 mb-2 text-[10px] font-semibold uppercase tracking-wider text-[#A1A1AA]">
+                    INTELIGÊNCIA
+                  </div>
+                  <button
+                    onclick="Components.openAiRoadmapModal()"
+                    class="w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-[13px] font-medium text-[#71717A] hover:bg-[#F4F4F5] hover:text-[#18181B] transition-colors"
+                  >
+                    <span class="flex items-center gap-2.5">
+                      <i data-lucide="sparkles" class="w-4 h-4 text-[#71717A]"></i>
+                      <span>Assistente IA</span>
+                    </span>
+                    <span class="px-1.5 py-0.5 text-[10px] font-medium rounded-md bg-[#F4F4F5] text-[#71717A] border border-[#E4E4E7]">
+                      Em breve
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Future Integration Card (Matches image_5086ad.png bottom left) -->
+              <div class="bg-[#FAFAFA] border border-[#E5E7EB] rounded-xl p-3.5">
+                <div class="w-7 h-7 rounded-lg bg-white border border-[#E5E7EB] flex items-center justify-center mb-2.5 text-[#18181B]">
+                  <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
+                </div>
+                <h4 class="text-xs font-semibold text-[#18181B] mb-1">Seu estoque, mais inteligente</h4>
+                <p class="text-[11px] leading-relaxed text-[#71717A] mb-2.5">
+                  Consultas em linguagem natural e automações com IA via N8N.
+                </p>
+                <button onclick="Components.openAiRoadmapModal()" class="text-[11px] font-medium text-[#52525B] hover:text-[#18181B] flex items-center gap-1">
+                  <span>Integração futura</span>
+                  <i data-lucide="arrow-up-right" class="w-3 h-3"></i>
+                </button>
+              </div>
+            </div>
+
+            <!-- Sidebar Footer -->
+            <div class="p-3.5 border-t border-[#E5E7EB] space-y-1">
+              <button
+                onclick="Components.openSettingsModal()"
+                class="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] font-medium text-[#52525B] hover:bg-[#F4F4F5] hover:text-[#18181B] transition-colors"
+              >
+                <i data-lucide="settings" class="w-4 h-4 text-[#71717A]"></i>
+                <span>Configurações</span>
+              </button>
+              <button
+                onclick="Store.logout()"
+                class="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] font-medium text-[#52525B] hover:bg-red-50 hover:text-red-700 transition-colors"
+              >
+                <i data-lucide="log-out" class="w-4 h-4"></i>
+                <span>Sair da conta</span>
+              </button>
+              <div class="px-3 pt-2 text-[10px] text-[#A1A1AA]">
+                SmartStock &nbsp;/&nbsp; Plataforma web
+              </div>
+            </div>
+          </div>
+        `;
+
+        return `
+          <!-- Desktop Fixed Sidebar -->
+          <aside class="hidden lg:block fixed inset-y-0 left-0 z-30 w-64 no-print">
+            ${sidebarContent}
+          </aside>
+
+          <!-- Mobile Drawer Overlay -->
+          ${Store.state.mobileMenuOpen ? `
+            <div class="lg:hidden fixed inset-0 z-40 flex no-print">
+              <div onclick="App.toggleMobileMenu(false)" class="fixed inset-0 bg-black/40 backdrop-blur-[1px]"></div>
+              <div class="relative z-50 w-64 max-w-[80vw] h-full">
+                ${sidebarContent}
+              </div>
+            </div>
+          ` : ''}
+        `;
+      },
+
+      renderHeader() {
+        const routeNames = {
+          dashboard: 'Operação principal',
+          products: 'Gestão de produtos',
+          movements: 'Movimentação de estoque',
+          alerts: 'Alertas de reposição',
+          reports: 'Relatórios gerenciais'
+        };
+
+        const lowStockItems = Store.getLowStockProducts();
+        const searchVal = Store.state.globalSearch;
+
+        // Global search quick results
+        let searchResultsHtml = '';
+        if (searchVal.trim().length > 0) {
+          const q = searchVal.toLowerCase();
+          const matchedProducts = Store.state.products.filter(
+            p => p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q) || p.category.toLowerCase().includes(q)
+          ).slice(0, 4);
+
+          const matchedMovements = Store.state.movements.filter(
+            m => m.productName.toLowerCase().includes(q) || m.reference.toLowerCase().includes(q) || m.responsible.toLowerCase().includes(q)
+          ).slice(0, 3);
+
+          searchResultsHtml = `
+            <div class="absolute left-0 right-0 top-full mt-1.5 bg-white border border-[#E5E7EB] rounded-xl shadow-lg z-40 overflow-hidden">
+              ${matchedProducts.length === 0 && matchedMovements.length === 0 ? `
+                <div class="p-4 text-xs text-[#71717A] text-center">Nenhum resultado para "${Utils.escapeHtml(searchVal)}"</div>
+              ` : `
+                ${matchedProducts.length > 0 ? `
+                  <div class="px-3 py-1.5 bg-[#FAFAFA] border-b border-[#E5E7EB] text-[10px] font-semibold uppercase text-[#71717A]">
+                    Produtos (${matchedProducts.length})
+                  </div>
+                  ${matchedProducts.map(p => `
+                    <button
+                      onclick="App.handleGlobalSearchSelect('products', '${Utils.escapeHtml(p.sku)}')"
+                      class="w-full px-3.5 py-2.5 text-left hover:bg-[#F4F4F5] flex items-center justify-between border-b border-[#F4F4F5] last:border-0"
+                    >
+                      <div>
+                        <div class="text-xs font-medium text-[#18181B]">${Utils.escapeHtml(p.name)}</div>
+                        <div class="text-[11px] text-[#71717A]">${Utils.escapeHtml(p.sku)} • ${Utils.escapeHtml(p.category)}</div>
+                      </div>
+                      <span class="text-xs font-semibold ${p.quantity < p.minStock ? 'text-amber-700' : 'text-[#18181B]'}">
+                        ${p.quantity} ${p.unit}
+                      </span>
+                    </button>
+                  `).join('')}
+                ` : ''}
+                ${matchedMovements.length > 0 ? `
+                  <div class="px-3 py-1.5 bg-[#FAFAFA] border-y border-[#E5E7EB] text-[10px] font-semibold uppercase text-[#71717A]">
+                    Movimentações (${matchedMovements.length})
+                  </div>
+                  ${matchedMovements.map(m => `
+                    <button
+                      onclick="App.handleGlobalSearchSelect('movements', '${Utils.escapeHtml(m.reference)}')"
+                      class="w-full px-3.5 py-2.5 text-left hover:bg-[#F4F4F5] flex items-center justify-between border-b border-[#F4F4F5] last:border-0"
+                    >
+                      <div>
+                        <div class="text-xs font-medium text-[#18181B]">${Utils.escapeHtml(m.productName)} (${Utils.escapeHtml(m.reference)})</div>
+                        <div class="text-[11px] text-[#71717A]">${Utils.escapeHtml(m.responsible)} • ${Utils.escapeHtml(m.date)}</div>
+                      </div>
+                      <span class="text-xs font-semibold text-[#18181B]">
+                        ${m.type === 'entrada' ? '+' : '-'}${m.quantity} ${m.unit}
+                      </span>
+                    </button>
+                  `).join('')}
+                ` : ''}
+              `}
+            </div>
+          `;
+        }
+
+        return `
+          <header class="sticky top-0 z-20 h-16 bg-white/95 backdrop-blur-xs border-b border-[#E5E7EB] px-4 sm:px-8 flex items-center justify-between gap-4 no-print">
+            <!-- Left: Mobile Toggle + Breadcrumb -->
+            <div class="flex items-center gap-3 min-w-0">
+              <button
+                onclick="App.toggleMobileMenu(true)"
+                class="lg:hidden p-2 -ml-2 rounded-lg text-[#52525B] hover:bg-[#F4F4F5]"
+                aria-label="Abrir menu"
+              >
+                <i data-lucide="menu" class="w-5 h-5"></i>
+              </button>
+              <nav class="flex items-center gap-2 text-xs sm:text-[13px] truncate">
+                <span class="text-[#71717A] hidden sm:inline">Workspace</span>
+                <span class="text-[#D4D4D8] hidden sm:inline">/</span>
+                <span class="font-medium text-[#18181B] truncate">${routeNames[Store.state.currentRoute] || 'Operação principal'}</span>
+              </nav>
+            </div>
+
+            <!-- Right: Global Search + Notifications + User -->
+            <div class="flex items-center gap-3 sm:gap-5">
+              <!-- Search Input -->
+              <div class="relative w-44 sm:w-64 md:w-72">
+                <i data-lucide="search" class="w-3.5 h-3.5 text-[#A1A1AA] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"></i>
+                <input
+                  id="global-search-input"
+                  type="text"
+                  value="${Utils.escapeHtml(searchVal)}"
+                  oninput="App.onGlobalSearch(this.value)"
+                  placeholder="Buscar produtos ou movimentações"
+                  class="w-full h-9 pl-8.5 pr-7 text-xs bg-[#FAFAFA] border border-[#E5E7EB] rounded-lg text-[#18181B] placeholder-[#A1A1AA] focus:outline-none focus:bg-white focus:border-[#18181B] transition-colors"
+                />
+                ${searchVal ? `
+                  <button
+                    onclick="App.onGlobalSearch('')"
+                    class="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#A1A1AA] hover:text-[#18181B]"
+                  >
+                    <i data-lucide="x" class="w-3.5 h-3.5"></i>
+                  </button>
+                ` : ''}
+                ${searchResultsHtml}
+              </div>
+
+              <!-- Notification Bell -->
+              <div class="relative">
+                <button
+                  onclick="App.toggleNotifications()"
+                  class="relative p-2 rounded-lg text-[#52525B] hover:bg-[#F4F4F5] hover:text-[#18181B] transition-colors"
+                  aria-label="Notificações"
+                >
+                  <i data-lucide="bell" class="w-4 h-4"></i>
+                  ${lowStockItems.length > 0 ? `
+                    <span class="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-[#18181B] ring-2 ring-white"></span>
+                  ` : ''}
+                </button>
+
+                ${Store.state.notificationsOpen ? `
+                  <div class="absolute right-0 mt-2 w-80 bg-white border border-[#E5E7EB] rounded-xl shadow-lg z-40 overflow-hidden">
+                    <div class="px-4 py-3 border-b border-[#E5E7EB] flex items-center justify-between">
+                      <span class="text-xs font-semibold text-[#18181B]">Alertas de Estoque</span>
+                      <span class="text-[11px] font-medium px-2 py-0.5 rounded-md bg-[#F4F4F5] text-[#18181B]">
+                        ${lowStockItems.length} itens
+                      </span>
+                    </div>
+                    <div class="max-h-64 overflow-y-auto divide-y divide-[#F4F4F5]">
+                      ${lowStockItems.length === 0 ? `
+                        <div class="p-4 text-xs text-[#71717A] text-center">Todos os itens estão com estoque regular.</div>
+                      ` : lowStockItems.slice(0, 5).map(item => `
+                        <div class="px-4 py-3 hover:bg-[#FAFAFA] flex items-center justify-between gap-2">
+                          <div class="min-w-0">
+                            <p class="text-xs font-medium text-[#18181B] truncate">${Utils.escapeHtml(item.name)}</p>
+                            <p class="text-[11px] text-[#71717A]">${Utils.escapeHtml(item.sku)} • Mínimo: ${item.minStock} ${item.unit}</p>
+                          </div>
+                          <button
+                            onclick="Components.openMovementModal('${item.id}', 'entrada', ${Math.max(10, item.minStock * 2 - item.quantity)})"
+                            class="shrink-0 px-2.5 py-1 text-[11px] font-medium bg-[#18181B] text-white rounded-md hover:bg-[#27272A]"
+                          >
+                            Repor (${item.quantity} ${item.unit})
+                          </button>
+                        </div>
+                      `).join('')}
+                    </div>
+                    <div class="px-4 py-2.5 bg-[#FAFAFA] border-t border-[#E5E7EB] text-center">
+                      <button onclick="Store.navigate('alerts')" class="text-xs font-medium text-[#18181B] hover:underline">
+                        Ver central de alertas →
+                      </button>
+                    </div>
+                  </div>
+                ` : ''}
+              </div>
+
+              <!-- User Profile -->
+              <div class="flex items-center gap-2.5 pl-2 border-l border-[#E5E7EB]">
+                <div class="w-8 h-8 rounded-full bg-[#F4F4F5] border border-[#E4E4E7] flex items-center justify-center text-xs font-semibold text-[#18181B]">
+                  AD
+                </div>
+                <div class="hidden md:block text-left leading-tight">
+                  <div class="text-xs font-semibold text-[#18181B]">${Utils.escapeHtml(Store.state.user.name)}</div>
+                  <div class="text-[11px] text-[#71717A]">${Utils.escapeHtml(Store.state.user.role)}</div>
+                </div>
+              </div>
+            </div>
+          </header>
+        `;
+      },
+
+      // Modal System
+      openModal(htmlContent) {
+        const modalRoot = document.getElementById('modal-root');
+        modalRoot.innerHTML = `
+          <div class="bg-white border border-[#E5E7EB] rounded-2xl shadow-xl w-full max-w-lg overflow-hidden fade-in" onclick="event.stopPropagation()">
+            ${htmlContent}
+          </div>
+        `;
+        modalRoot.classList.remove('hidden');
+        modalRoot.classList.add('flex');
+        modalRoot.onclick = () => this.closeModal();
+        if (window.lucide) lucide.createIcons();
+      },
+
+      closeModal() {
+        const modalRoot = document.getElementById('modal-root');
+        modalRoot.classList.add('hidden');
+        modalRoot.classList.remove('flex');
+        modalRoot.innerHTML = '';
+      },
+
+      // Product Create/Edit Modal
+      openProductModal(productId = null) {
+        const product = productId ? Store.state.products.find(p => p.id === productId) : null;
+        const isEdit = Boolean(product);
+        const existingCategories = Store.getCategories();
+
+        this.openModal(`
+          <div class="px-6 py-4 border-b border-[#E5E7EB] flex items-center justify-between">
+            <div>
+              <h3 class="text-base font-semibold text-[#18181B]">${isEdit ? 'Editar Produto' : 'Novo Produto'}</h3>
+              <p class="text-xs text-[#71717A]">${isEdit ? 'Atualize as informações cadastrais e parâmetros de estoque.' : 'Cadastre um novo item no catálogo do SmartStock.'}</p>
+            </div>
+            <button onclick="Components.closeModal()" class="p-1.5 rounded-lg text-[#71717A] hover:bg-[#F4F4F5]">
+              <i data-lucide="x" class="w-4 h-4"></i>
+            </button>
+          </div>
+          <form onsubmit="App.handleProductFormSubmit(event, '${productId || ''}')" class="p-6 space-y-4">
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div class="sm:col-span-2">
+                <label class="block text-xs font-medium text-[#18181B] mb-1">Nome do produto *</label>
+                <input
+                  type="text"
+                  name="name"
+                  required
+                  value="${isEdit ? Utils.escapeHtml(product.name) : ''}"
+                  placeholder="Ex: Luvas de proteção nitrílica"
+                  class="w-full h-9 px-3 text-xs border border-[#E5E7EB] rounded-lg focus:outline-none focus:border-[#18181B]"
+                />
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-[#18181B] mb-1">Código / SKU *</label>
+                <input
+                  type="text"
+                  name="sku"
+                  required
+                  value="${isEdit ? Utils.escapeHtml(product.sku) : ''}"
+                  placeholder="Ex: LUV-002"
+                  class="w-full h-9 px-3 text-xs uppercase border border-[#E5E7EB] rounded-lg focus:outline-none focus:border-[#18181B]"
+                />
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label class="block text-xs font-medium text-[#18181B] mb-1">Categoria *</label>
+                <input
+                  type="text"
+                  name="category"
+                  list="categories-list"
+                  required
+                  value="${isEdit ? Utils.escapeHtml(product.category) : ''}"
+                  placeholder="Selecione ou digite..."
+                  class="w-full h-9 px-3 text-xs border border-[#E5E7EB] rounded-lg focus:outline-none focus:border-[#18181B]"
+                />
+                <datalist id="categories-list">
+                  ${existingCategories.map(cat => `<option value="${Utils.escapeHtml(cat)}">`).join('')}
+                </datalist>
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-[#18181B] mb-1">Preço Unitário (R$) *</label>
+                <input
+                  type="number"
+                  name="price"
+                  step="0.01"
+                  min="0"
+                  required
+                  value="${isEdit ? product.price : ''}"
+                  placeholder="0,00"
+                  class="w-full h-9 px-3 text-xs border border-[#E5E7EB] rounded-lg focus:outline-none focus:border-[#18181B]"
+                />
+              </div>
+            </div>
+
+            <div class="grid grid-cols-3 gap-4">
+              <div>
+                <label class="block text-xs font-medium text-[#18181B] mb-1">${isEdit ? 'Qtd. Atual *' : 'Qtd. Inicial *'}</label>
+                <input
+                  type="number"
+                  name="quantity"
+                  min="0"
+                  required
+                  value="${isEdit ? product.quantity : 0}"
+                  class="w-full h-9 px-3 text-xs border border-[#E5E7EB] rounded-lg focus:outline-none focus:border-[#18181B]"
+                />
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-[#18181B] mb-1">Estoque Mínimo *</label>
+                <input
+                  type="number"
+                  name="minStock"
+                  min="1"
+                  required
+                  value="${isEdit ? product.minStock : 10}"
+                  class="w-full h-9 px-3 text-xs border border-[#E5E7EB] rounded-lg focus:outline-none focus:border-[#18181B]"
+                />
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-[#18181B] mb-1">Unidade</label>
+                <select
+                  name="unit"
+                  class="w-full h-9 px-3 text-xs bg-white border border-[#E5E7EB] rounded-lg focus:outline-none focus:border-[#18181B]"
+                >
+                  ${['un.', 'cx.', 'pct.', 'lt.', 'kg.', 'par'].map(u => `
+                    <option value="${u}" ${isEdit && product.unit === u ? 'selected' : ''}>${u}</option>
+                  `).join('')}
+                </select>
+              </div>
+            </div>
+
+            <div class="pt-3 border-t border-[#E5E7EB] flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onclick="Components.closeModal()"
+                class="px-4 py-2 text-xs font-medium text-[#52525B] bg-white border border-[#E5E7EB] rounded-lg hover:bg-[#F4F4F5]"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                class="px-4 py-2 text-xs font-medium text-white bg-[#18181B] rounded-lg hover:bg-[#27272A]"
+              >
+                ${isEdit ? 'Salvar alterações' : 'Cadastrar produto'}
+              </button>
+            </div>
+          </form>
+        `);
+      },
+
+      // Delete Confirmation Modal
+      openDeleteConfirmModal(productId) {
+        const product = Store.state.products.find(p => p.id === productId);
+        if (!product) return;
+
+        this.openModal(`
+          <div class="p-6">
+            <div class="w-10 h-10 rounded-xl bg-red-50 text-red-600 flex items-center justify-center mb-4">
+              <i data-lucide="trash-2" class="w-5 h-5"></i>
+            </div>
+            <h3 class="text-base font-semibold text-[#18181B] mb-1">Excluir produto do catálogo?</h3>
+            <p class="text-xs text-[#71717A] leading-relaxed mb-5">
+              Você está prestes a remover <strong class="text-[#18181B]">${Utils.escapeHtml(product.name)} (${Utils.escapeHtml(product.sku)})</strong>. Esta ação não poderá ser desfeita.
+            </p>
+            <div class="flex items-center justify-end gap-2.5">
+              <button
+                onclick="Components.closeModal()"
+                class="px-4 py-2 text-xs font-medium text-[#52525B] bg-white border border-[#E5E7EB] rounded-lg hover:bg-[#F4F4F5]"
+              >
+                Cancelar
+              </button>
+              <button
+                onclick="Store.deleteProduct('${product.id}'); Components.closeModal();"
+                class="px-4 py-2 text-xs font-medium text-white bg-red-600 rounded-lg hover:bg-red-700"
+              >
+                Sim, excluir produto
+              </button>
+            </div>
+          </div>
+        `);
+      },
+
+      // Movement Modal (Entrada / Saída)
+      openMovementModal(preselectedProductId = '', preselectedType = 'entrada', preselectedQty = '') {
+        Store.state.notificationsOpen = false;
+        const products = Store.state.products;
+
+        this.openModal(`
+          <div class="px-6 py-4 border-b border-[#E5E7EB] flex items-center justify-between">
+            <div>
+              <h3 class="text-base font-semibold text-[#18181B]">Nova Movimentação de Estoque</h3>
+              <p class="text-xs text-[#71717A]">Registre entradas de fornecedores ou saídas por requisição.</p>
+            </div>
+            <button onclick="Components.closeModal()" class="p-1.5 rounded-lg text-[#71717A] hover:bg-[#F4F4F5]">
+              <i data-lucide="x" class="w-4 h-4"></i>
+            </button>
+          </div>
+          <form onsubmit="App.handleMovementFormSubmit(event)" class="p-6 space-y-4">
+            <div id="movement-error-box" class="hidden p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700"></div>
+
+            <!-- Type Selector -->
+            <div>
+              <label class="block text-xs font-medium text-[#18181B] mb-1.5">Tipo de operação *</label>
+              <div class="grid grid-cols-2 gap-3">
+                <label class="cursor-pointer">
+                  <input type="radio" name="type" value="entrada" class="peer sr-only" ${preselectedType === 'entrada' ? 'checked' : ''} />
+                  <div class="p-3 rounded-xl border border-[#E5E7EB] peer-checked:border-[#18181B] peer-checked:bg-[#FAFAFA] flex items-center gap-2.5 transition-all">
+                    <div class="w-7 h-7 rounded-lg bg-[#F4F4F5] flex items-center justify-center text-[#18181B]">
+                      <i data-lucide="arrow-down-left" class="w-4 h-4"></i>
+                    </div>
+                    <div>
+                      <div class="text-xs font-semibold text-[#18181B]">Entrada</div>
+                      <div class="text-[11px] text-[#71717A]">Reposição / Compra</div>
+                    </div>
+                  </div>
+                </label>
+                <label class="cursor-pointer">
+                  <input type="radio" name="type" value="saida" class="peer sr-only" ${preselectedType === 'saida' ? 'checked' : ''} />
+                  <div class="p-3 rounded-xl border border-[#E5E7EB] peer-checked:border-[#18181B] peer-checked:bg-[#FAFAFA] flex items-center gap-2.5 transition-all">
+                    <div class="w-7 h-7 rounded-lg bg-[#F4F4F5] flex items-center justify-center text-[#18181B]">
+                      <i data-lucide="arrow-up-right" class="w-4 h-4"></i>
+                    </div>
+                    <div>
+                      <div class="text-xs font-semibold text-[#18181B]">Saída</div>
+                      <div class="text-[11px] text-[#71717A]">Consumo / Requisição</div>
+                    </div>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            <!-- Product Select -->
+            <div>
+              <label class="block text-xs font-medium text-[#18181B] mb-1">Produto *</label>
+              <select
+                name="productId"
+                required
+                class="w-full h-9 px-3 text-xs bg-white border border-[#E5E7EB] rounded-lg focus:outline-none focus:border-[#18181B]"
+              >
+                <option value="">Selecione um produto...</option>
+                ${products.map(p => `
+                  <option value="${p.id}" ${p.id === preselectedProductId ? 'selected' : ''}>
+                    [${Utils.escapeHtml(p.sku)}] ${Utils.escapeHtml(p.name)} — Saldo atual: ${p.quantity} ${p.unit}
+                  </option>
+                `).join('')}
+              </select>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label class="block text-xs font-medium text-[#18181B] mb-1">Quantidade *</label>
+                <input
+                  type="number"
+                  name="quantity"
+                  min="1"
+                  required
+                  value="${preselectedQty}"
+                  placeholder="Ex: 25"
+                  class="w-full h-9 px-3 text-xs border border-[#E5E7EB] rounded-lg focus:outline-none focus:border-[#18181B]"
+                />
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-[#18181B] mb-1">Documento / Referência</label>
+                <input
+                  type="text"
+                  name="reference"
+                  placeholder="Ex: NF-00490 ou REQ-0135"
+                  class="w-full h-9 px-3 text-xs uppercase border border-[#E5E7EB] rounded-lg focus:outline-none focus:border-[#18181B]"
+                />
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label class="block text-xs font-medium text-[#18181B] mb-1">Responsável *</label>
+                <input
+                  type="text"
+                  name="responsible"
+                  required
+                  value="${Utils.escapeHtml(Store.state.user.name)}"
+                  class="w-full h-9 px-3 text-xs border border-[#E5E7EB] rounded-lg focus:outline-none focus:border-[#18181B]"
+                />
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-[#18181B] mb-1">Observação (opcional)</label>
+                <input
+                  type="text"
+                  name="notes"
+                  placeholder="Ex: Conferido na doca 1"
+                  class="w-full h-9 px-3 text-xs border border-[#E5E7EB] rounded-lg focus:outline-none focus:border-[#18181B]"
+                />
+              </div>
+            </div>
+
+            <div class="pt-3 border-t border-[#E5E7EB] flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onclick="Components.closeModal()"
+                class="px-4 py-2 text-xs font-medium text-[#52525B] bg-white border border-[#E5E7EB] rounded-lg hover:bg-[#F4F4F5]"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                class="px-4 py-2 text-xs font-medium text-white bg-[#18181B] rounded-lg hover:bg-[#27272A]"
+              >
+                Confirmar movimentação
+              </button>
+            </div>
+          </form>
+        `);
+      },
+
+      // Settings Modal
+      openSettingsModal() {
+        this.openModal(`
+          <div class="px-6 py-4 border-b border-[#E5E7EB] flex items-center justify-between">
+            <div>
+              <h3 class="text-base font-semibold text-[#18181B]">Configurações da Plataforma</h3>
+              <p class="text-xs text-[#71717A]">Gerencie os dados locais e preferências da sessão.</p>
+            </div>
+            <button onclick="Components.closeModal()" class="p-1.5 rounded-lg text-[#71717A] hover:bg-[#F4F4F5]">
+              <i data-lucide="x" class="w-4 h-4"></i>
+            </button>
+          </div>
+          <div class="p-6 space-y-5">
+            <div class="p-4 rounded-xl bg-[#FAFAFA] border border-[#E5E7EB] flex items-center justify-between">
+              <div>
+                <div class="text-xs font-semibold text-[#18181B]">Usuário Conectado</div>
+                <div class="text-xs text-[#71717A]">${Utils.escapeHtml(Store.state.user.email)}</div>
+              </div>
+              ${this.renderBadge('Ativo', 'neutral')}
+            </div>
+
+            <div class="p-4 rounded-xl border border-[#E5E7EB] space-y-3">
+              <div class="text-xs font-semibold text-[#18181B]">Base de Dados Local (localStorage)</div>
+              <p class="text-xs text-[#71717A] leading-relaxed">
+                Todas as alterações em produtos e movimentações são salvas automaticamente no navegador. Caso deseje reiniciar a demonstração com os valores originais do protótipo, utilize o botão abaixo.
+              </p>
+              <button
+                onclick="Store.resetToDemo(true); Components.closeModal();"
+                class="px-3.5 py-2 text-xs font-medium text-[#18181B] bg-[#F4F4F5] border border-[#E4E4E7] rounded-lg hover:bg-[#E4E4E7] transition-colors inline-flex items-center gap-2"
+              >
+                <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
+                <span>Restaurar dados demonstrativos</span>
+              </button>
+            </div>
+          </div>
+        `);
+      },
+
+      // AI / N8N Architecture Roadmap Modal (Based on image_508b0b.jpg)
+      openAiRoadmapModal() {
+        this.openModal(`
+          <div class="px-6 py-4 border-b border-[#E5E7EB] flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <div class="w-7 h-7 rounded-lg bg-[#18181B] text-white flex items-center justify-center">
+                <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
+              </div>
+              <div>
+                <h3 class="text-sm font-semibold text-[#18181B]">Assistente IA & Orquestração N8N</h3>
+                <p class="text-[11px] text-[#71717A]">Arquitetura SmartStock — Fase de Interação Autônoma</p>
+              </div>
+            </div>
+            <button onclick="Components.closeModal()" class="p-1.5 rounded-lg text-[#71717A] hover:bg-[#F4F4F5]">
+              <i data-lucide="x" class="w-4 h-4"></i>
+            </button>
+          </div>
+          <div class="p-6 space-y-4">
+            <div class="p-4 rounded-xl bg-[#FAFAFA] border border-[#E5E7EB] space-y-2">
+              <div class="flex items-center justify-between">
+                <span class="text-xs font-semibold text-[#18181B]">Roadmap de Integração Futura</span>
+                ${this.renderBadge('Em breve', 'neutral')}
+              </div>
+              <p class="text-xs text-[#52525B] leading-relaxed">
+                Conforme a arquitetura da solução SmartStock, este módulo conectará a API REST e o Banco de Dados ao orquestrador de fluxos <strong>N8N</strong> e modelos de <strong>Inteligência Artificial</strong> para:
+              </p>
+              <ul class="text-xs text-[#71717A] space-y-1.5 pt-1 list-disc list-inside">
+                <li>Consultas de saldo e histórico em linguagem natural;</li>
+                <li>Previsão de demanda e análise preditiva de ruptura;</li>
+                <li>Disparo autônomo de cotações quando itens atingirem o mínimo.</li>
+              </ul>
+            </div>
+            <div class="flex justify-end">
+              <button onclick="Components.closeModal()" class="px-4 py-2 text-xs font-medium text-white bg-[#18181B] rounded-lg hover:bg-[#27272A]">
+                Entendi
+              </button>
+            </div>
+          </div>
+        `);
+      },
+
+      // Toast Notification
+      showToast(message) {
+        const toastRoot = document.getElementById('toast-root');
+        const id = 'toast-' + Date.now();
+        const el = document.createElement('div');
+        el.id = id;
+        el.className = 'pointer-events-auto bg-[#18181B] text-white px-4 py-3 rounded-xl shadow-lg border border-[#27272A] flex items-center justify-between gap-3 text-xs font-medium fade-in';
+        el.innerHTML = `
+          <div class="flex items-center gap-2.5">
+            <i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-400 shrink-0"></i>
+            <span>${Utils.escapeHtml(message)}</span>
+          </div>
+          <button onclick="document.getElementById('${id}')?.remove()" class="text-[#A1A1AA] hover:text-white">
+            <i data-lucide="x" class="w-3.5 h-3.5"></i>
+          </button>
+        `;
+        toastRoot.appendChild(el);
+        if (window.lucide) lucide.createIcons();
+
+        setTimeout(() => {
+          el.style.opacity = '0';
+          el.style.transition = 'opacity 0.25s ease';
+          setTimeout(() => el.remove(), 250);
+        }, 3500);
+      }
+    };
+
+    // ============================================================================
+    // 4. APPLICATION VIEWS
+    // ============================================================================
+    const Views = {
+      // 4.1.1 TELA DE LOGIN
+      LoginView() {
+        return `
+          <div class="min-h-screen bg-[#FAFAFA] flex flex-col justify-between p-4 sm:p-8">
+            <!-- Top Minimal Bar -->
+            <div class="max-w-6xl w-full mx-auto flex items-center justify-between">
+              ${Components.renderBrandLogo('md')}
+              <span class="text-xs text-[#71717A] hidden sm:inline">Plataforma Corporativa de Gestão de Estoque</span>
+            </div>
+
+            <!-- Centered Auth Card -->
+            <div class="w-full max-w-[400px] mx-auto my-8">
+              <div class="bg-white border border-[#E5E7EB] rounded-2xl p-6 sm:p-8 shadow-xs">
+                <div class="mb-6">
+                  <div class="w-10 h-10 rounded-xl bg-[#18181B] text-white flex items-center justify-center mb-4">
+                    <i data-lucide="box" class="w-5 h-5"></i>
+                  </div>
+                  <h1 class="text-xl font-bold tracking-tight text-[#18181B]">Acessar SmartStock</h1>
+                  <p class="text-xs text-[#71717A] mt-1">
+                    Insira suas credenciais operacionais para gerenciar o inventário.
+                  </p>
+                </div>
+
+                <div id="login-error" class="hidden mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700"></div>
+
+                <form onsubmit="App.handleLoginSubmit(event)" class="space-y-4">
+                  <div>
+                    <label for="login-email" class="block text-xs font-medium text-[#18181B] mb-1.5">E-mail corporativo</label>
+                    <div class="relative">
+                      <i data-lucide="mail" class="w-4 h-4 text-[#A1A1AA] absolute left-3 top-1/2 -translate-y-1/2"></i>
+                      <input
+                        id="login-email"
+                        name="email"
+                        type="email"
+                        required
+                        value="admin@smartstock.com.br"
+                        placeholder="nome@empresa.com.br"
+                        class="w-full h-10 pl-9.5 pr-3 text-xs border border-[#E5E7EB] rounded-lg text-[#18181B] focus:outline-none focus:border-[#18181B] transition-colors"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <div class="flex items-center justify-between mb-1.5">
+                      <label for="login-password" class="block text-xs font-medium text-[#18181B]">Senha</label>
+                      <button type="button" onclick="App.fillDemoCredentials()" class="text-[11px] font-medium text-[#71717A] hover:text-[#18181B]">
+                        Preencher acesso demo
+                      </button>
+                    </div>
+                    <div class="relative">
+                      <i data-lucide="lock" class="w-4 h-4 text-[#A1A1AA] absolute left-3 top-1/2 -translate-y-1/2"></i>
+                      <input
+                        id="login-password"
+                        name="password"
+                        type="password"
+                        required
+                        value="123456"
+                        placeholder="••••••••"
+                        class="w-full h-10 pl-9.5 pr-10 text-xs border border-[#E5E7EB] rounded-lg text-[#18181B] focus:outline-none focus:border-[#18181B] transition-colors"
+                      />
+                      <button
+                        type="button"
+                        onclick="App.togglePasswordVisibility()"
+                        class="absolute right-3 top-1/2 -translate-y-1/2 text-[#A1A1AA] hover:text-[#18181B]"
+                        aria-label="Mostrar ou ocultar senha"
+                      >
+                        <i id="password-eye-icon" data-lucide="eye" class="w-4 h-4"></i>
+                      </button>
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    class="w-full h-10 bg-[#18181B] text-white text-xs font-semibold rounded-lg hover:bg-[#27272A] transition-colors flex items-center justify-center gap-2 mt-2"
+                  >
+                    <span>Entrar na plataforma</span>
+                    <i data-lucide="arrow-right" class="w-4 h-4"></i>
+                  </button>
+                </form>
+
+                <div class="mt-6 pt-5 border-t border-[#F4F4F5] flex items-center justify-between text-[11px] text-[#71717A]">
+                  <span>Ambiente de Demonstração</span>
+                  <span class="font-mono bg-[#FAFAFA] px-2 py-0.5 rounded border border-[#E5E7EB]">v1.0 Web</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Footer -->
+            <div class="max-w-6xl w-full mx-auto flex flex-col sm:flex-row items-center justify-between gap-2 text-[11px] text-[#A1A1AA]">
+              <span>SmartStock — Arquitetura Integrada de Controle de Estoque</span>
+              <span>Desenvolvido para Projeto Integrador</span>
+            </div>
+          </div>
+        `;
+      },
+
+      // 4.1.2 DASHBOARD - VISÃO GERAL (Fiel ao print image_5086ad.png)
+      DashboardView() {
+        const totalValue = Store.getTotalStockValue();
+        const totalProductsCount = Store.state.products.length;
+        const totalUnits = Store.getTotalUnitsInStock();
+        const categoriesCount = Store.getCategories().length;
+        const lowStockProducts = Store.getLowStockProducts();
+        const totalMovements = Store.state.movements.length;
+        const entriesCount = Store.state.movements.filter(m => m.type === 'entrada').length;
+        const exitsCount = Store.state.movements.filter(m => m.type === 'saida').length;
+
+        const maxChartVal = Math.max(
+          30,
+          ...Store.state.weeklyFlow.map(d => Math.max(d.entradas, d.saidas))
+        );
+
+        return `
+          <div class="space-y-6 fade-in">
+            <!-- Page Title & Primary Actions -->
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div>
+                <h1 class="text-2xl font-bold tracking-tight text-[#18181B]">Visão geral</h1>
+                <p class="text-[13px] text-[#71717A] mt-0.5">Acompanhe seu estoque. Antecipe o próximo passo.</p>
+              </div>
+              <div class="flex items-center gap-2.5">
+                <button
+                  onclick="App.exportDashboardCSV()"
+                  class="h-9 px-3.5 bg-white border border-[#E5E7EB] rounded-lg text-xs font-medium text-[#18181B] hover:bg-[#F4F4F5] transition-colors inline-flex items-center gap-2"
+                >
+                  <i data-lucide="bar-chart-2" class="w-3.5 h-3.5 text-[#52525B]"></i>
+                  <span>Exportar relatório</span>
+                </button>
+                <button
+                  onclick="Components.openMovementModal()"
+                  class="h-9 px-4 bg-[#18181B] text-white rounded-lg text-xs font-medium hover:bg-[#27272A] transition-colors inline-flex items-center gap-1.5 shadow-xs"
+                >
+                  <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+                  <span>Nova movimentação</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- 4 KPI Cards Grid -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+              ${Components.renderKpiCard({
+                title: 'Valor total do estoque',
+                value: Utils.formatCurrency(totalValue),
+                icon: 'bar-chart-2',
+                subLeft: '+4,6%',
+                subRight: 'em relação ao mês anterior',
+                highlight: true
+              })}
+              ${Components.renderKpiCard({
+                title: 'Produtos cadastrados',
+                value: `${Utils.formatNumber(totalProductsCount)} SKUs`,
+                icon: 'package',
+                subLeft: `${categoriesCount} categorias`,
+                subRight: `${Utils.formatNumber(totalUnits)} un. totais`
+              })}
+              ${Components.renderKpiCard({
+                title: 'Itens abaixo do mínimo',
+                value: String(lowStockProducts.length),
+                icon: 'alert-triangle',
+                subLeft: lowStockProducts.length > 0 ? 'Atenção necessária' : 'Estoque saudável',
+                subRight: lowStockProducts.length > 0 ? 'Confira as reposições' : 'Tudo regular',
+                highlight: lowStockProducts.length > 0
+              })}
+              ${Components.renderKpiCard({
+                title: 'Movimentações registradas',
+                value: String(totalMovements),
+                icon: 'arrow-left-right',
+                subLeft: `↑ ${entriesCount} entradas`,
+                subRight: `↓ ${exitsCount} saídas`
+              })}
+            </div>
+
+            <!-- Middle Grid: Stock Flow Chart (2 cols) + Priority Replenishment (1 col) -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              <!-- Fluxo de Estoque Chart Card -->
+              <div class="lg:col-span-2 bg-white border border-[#E5E7EB] rounded-xl p-5 flex flex-col justify-between">
+                <div class="flex flex-col sm:flex-row sm:items-start justify-between gap-3 mb-5">
+                  <div>
+                    <h2 class="text-[15px] font-semibold text-[#18181B]">Fluxo de estoque</h2>
+                    <p class="text-xs text-[#71717A] mt-0.5">Entradas e saídas nos últimos 7 dias</p>
+                  </div>
+                  <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[#E5E7EB] bg-[#FAFAFA] text-xs font-medium text-[#52525B] self-start">
+                    <i data-lucide="calendar" class="w-3.5 h-3.5 text-[#71717A]"></i>
+                    <span>11–17 nov, 2026</span>
+                  </div>
+                </div>
+
+                <!-- Legend -->
+                <div class="flex items-center justify-between mb-4">
+                  <div class="flex items-center gap-5 text-xs">
+                    <span class="flex items-center gap-2 font-medium text-[#18181B]">
+                      <span class="w-2.5 h-2.5 rounded-xs bg-[#18181B] inline-block"></span>
+                      Entradas
+                    </span>
+                    <span class="flex items-center gap-2 font-medium text-[#71717A]">
+                      <span class="w-2.5 h-2.5 rounded-xs bg-[#D4D4D8] inline-block"></span>
+                      Saídas
+                    </span>
+                  </div>
+                  <span class="text-[10px] font-semibold uppercase tracking-wider text-[#A1A1AA]">MOVIMENTAÇÕES</span>
+                </div>
+
+                <!-- Interactive Bar Chart -->
+                <div class="relative pt-2">
+                  <div class="grid grid-cols-7 gap-2 sm:gap-4 items-end h-48 border-b border-[#E5E7EB] pb-2 px-1">
+                    ${Store.state.weeklyFlow.map(item => {
+                      const inHeight = Math.min(100, Math.round((item.entradas / maxChartVal) * 100));
+                      const outHeight = Math.min(100, Math.round((item.saidas / maxChartVal) * 100));
+                      return `
+                        <div class="group relative flex flex-col items-center h-full justify-end">
+                          <!-- Tooltip on hover -->
+                          <div class="opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none absolute -top-9 z-10 bg-[#18181B] text-white text-[10px] font-medium px-2 py-1 rounded-md whitespace-nowrap shadow-sm">
+                            +${item.entradas} / -${item.saidas}
+                          </div>
+                          <div class="w-full flex items-end justify-center gap-1 sm:gap-1.5 h-full">
+                            <div
+                              style="height: ${inHeight}%"
+                              class="w-2.5 sm:w-3.5 bg-[#18181B] rounded-t-sm transition-all duration-300 group-hover:bg-[#3F3F46]"
+                            ></div>
+                            <div
+                              style="height: ${outHeight}%"
+                              class="w-2.5 sm:w-3.5 bg-[#D4D4D8] rounded-t-sm transition-all duration-300 group-hover:bg-[#A1A1AA]"
+                            ></div>
+                          </div>
+                        </div>
+                      `;
+                    }).join('')}
+                  </div>
+                  <div class="grid grid-cols-7 gap-2 sm:gap-4 pt-2.5 text-center">
+                    ${Store.state.weeklyFlow.map(item => `
+                      <span class="text-[11px] text-[#71717A]">${item.day}</span>
+                    `).join('')}
+                  </div>
+                </div>
+              </div>
+
+              <!-- Reposição Prioritária Card -->
+              <div class="bg-white border border-[#E5E7EB] rounded-xl p-5 flex flex-col justify-between">
+                <div>
+                  <div class="flex items-start justify-between gap-2 mb-4">
+                    <div>
+                      <h2 class="text-[15px] font-semibold text-[#18181B]">Reposição prioritária</h2>
+                      <p class="text-xs text-[#71717A] mt-0.5">Produtos abaixo do estoque mínimo</p>
+                    </div>
+                    <span class="px-2 py-0.5 text-xs font-semibold rounded-md bg-[#F4F4F5] text-[#18181B] border border-[#E4E4E7]">
+                      ${lowStockProducts.length}
+                    </span>
+                  </div>
+
+                  <div class="divide-y divide-[#F4F4F5]">
+                    ${lowStockProducts.length === 0 ? `
+                      <div class="py-8 text-center text-xs text-[#71717A]">
+                        Nenhum produto abaixo do estoque mínimo.
+                      </div>
+                    ` : lowStockProducts.slice(0, 4).map((item, idx) => `
+                      <div class="py-3 flex items-center justify-between gap-3">
+                        <div class="min-w-0">
+                          <div class="text-[13px] font-medium text-[#18181B] truncate">${Utils.escapeHtml(item.name)}</div>
+                          <div class="text-[11px] text-[#71717A] mt-0.5">
+                            ${Utils.escapeHtml(item.sku)} &nbsp;•&nbsp; Mínimo: ${item.minStock} ${item.unit}
+                          </div>
+                        </div>
+                        <button
+                          onclick="Components.openMovementModal('${item.id}', 'entrada', ${Math.max(10, item.minStock * 2 - item.quantity)})"
+                          title="Clique para repor estoque"
+                          class="shrink-0 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
+                            idx === 0
+                              ? 'bg-[#18181B] text-white hover:bg-[#27272A]'
+                              : 'bg-[#F4F4F5] text-[#18181B] hover:bg-[#E4E4E7]'
+                          }"
+                        >
+                          ${item.quantity} ${item.unit}
+                        </button>
+                      </div>
+                    `).join('')}
+                  </div>
+                </div>
+
+                <div class="pt-3 mt-2 border-t border-[#F4F4F5]">
+                  <button
+                    onclick="Store.navigate('alerts')"
+                    class="w-full flex items-center justify-between text-xs font-semibold text-[#18181B] hover:text-[#52525B] py-1"
+                  >
+                    <span>Ver todos os ${lowStockProducts.length} alertas</span>
+                    <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Movimentações Recentes Table Card -->
+            <div class="bg-white border border-[#E5E7EB] rounded-xl overflow-hidden">
+              <div class="p-5 flex items-center justify-between gap-4 border-b border-[#F4F4F5]">
+                <div>
+                  <h2 class="text-[15px] font-semibold text-[#18181B]">Movimentações recentes</h2>
+                  <p class="text-xs text-[#71717A] mt-0.5">Rastreabilidade de cada entrada e saída do seu estoque.</p>
+                </div>
+                <button
+                  onclick="Store.navigate('movements')"
+                  class="text-xs font-semibold text-[#18181B] hover:text-[#52525B] inline-flex items-center gap-1.5 shrink-0"
+                >
+                  <span>Ver todas</span>
+                  <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
+                </button>
+              </div>
+
+              <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                  <thead>
+                    <tr class="bg-[#FAFAFA] border-b border-[#E5E7EB] text-[11px] font-medium text-[#71717A]">
+                      <th class="py-3 px-5">Produto</th>
+                      <th class="py-3 px-4">Tipo</th>
+                      <th class="py-3 px-4">Quantidade</th>
+                      <th class="py-3 px-4">Responsável</th>
+                      <th class="py-3 px-4">Data e hora</th>
+                      <th class="py-3 px-5 text-right">Referência</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-[#F4F4F5] text-xs">
+                    ${Store.state.movements.slice(0, 5).map(mov => {
+                      const isEntrada = mov.type === 'entrada';
+                      return `
+                        <tr class="hover:bg-[#FAFAFA] transition-colors">
+                          <td class="py-3.5 px-5">
+                            <div class="font-medium text-[#18181B]">${Utils.escapeHtml(mov.productName)}</div>
+                            <div class="text-[11px] text-[#71717A]">${Utils.escapeHtml(mov.productSku)}</div>
+                          </td>
+                          <td class="py-3.5 px-4">
+                            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium border ${
+                              isEntrada
+                                ? 'bg-[#F4F4F5] text-[#18181B] border-[#E4E4E7]'
+                                : 'bg-white text-[#52525B] border-[#E5E7EB]'
+                            }">
+                              <i data-lucide="${isEntrada ? 'arrow-down' : 'arrow-up'}" class="w-3 h-3"></i>
+                              ${isEntrada ? 'Entrada' : 'Saída'}
+                            </span>
+                          </td>
+                          <td class="py-3.5 px-4 font-semibold text-[#18181B]">
+                            ${isEntrada ? '+' : '−'}${mov.quantity} ${Utils.escapeHtml(mov.unit)}
+                          </td>
+                          <td class="py-3.5 px-4 text-[#52525B]">${Utils.escapeHtml(mov.responsible)}</td>
+                          <td class="py-3.5 px-4 text-[#71717A]">${Utils.escapeHtml(mov.date)}</td>
+                          <td class="py-3.5 px-5 text-right font-mono text-[11px] text-[#52525B]">${Utils.escapeHtml(mov.reference)}</td>
+                        </tr>
+                      `;
+                    }).join('')}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Subtle Bottom Metadata (Matches prototype bottom line) -->
+            <div class="flex flex-col sm:flex-row items-center justify-between gap-2 text-[11px] text-[#A1A1AA] pt-1">
+              <span>Dados operacionais sincronizados • Visão gerencial do estoque</span>
+              <span>Última atualização: ${Utils.formatDateTimeNow()}</span>
+            </div>
+          </div>
+        `;
+      },
+
+      // 4.1.3 GESTÃO DE PRODUTOS
+      ProductsView() {
+        const { search, category, status } = Store.state.productFilters;
+        const categories = Store.getCategories();
+
+        const filteredProducts = Store.state.products.filter(p => {
+          const matchesSearch =
+            !search ||
+            p.name.toLowerCase().includes(search.toLowerCase()) ||
+            p.sku.toLowerCase().includes(search.toLowerCase());
+          const matchesCat = category === 'all' || p.category === category;
+          const isLow = p.quantity < p.minStock;
+          const matchesStatus =
+            status === 'all' ||
+            (status === 'low' && isLow) ||
+            (status === 'normal' && !isLow);
+          return matchesSearch && matchesCat && matchesStatus;
+        });
+
+        return `
+          <div class="space-y-6 fade-in">
+            <!-- Header -->
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div>
+                <h1 class="text-2xl font-bold tracking-tight text-[#18181B]">Produtos</h1>
+                <p class="text-[13px] text-[#71717A] mt-0.5">Gerencie o catálogo, preços unitários e níveis mínimos de estoque.</p>
+              </div>
+              <button
+                onclick="Components.openProductModal()"
+                class="h-9 px-4 bg-[#18181B] text-white rounded-lg text-xs font-medium hover:bg-[#27272A] transition-colors inline-flex items-center gap-1.5 self-start sm:self-auto"
+              >
+                <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+                <span>Novo produto</span>
+              </button>
+            </div>
+
+            <!-- Filters Bar -->
+            <div class="bg-white border border-[#E5E7EB] rounded-xl p-4 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+              <div class="relative flex-1 max-w-md">
+                <i data-lucide="search" class="w-3.5 h-3.5 text-[#A1A1AA] absolute left-3 top-1/2 -translate-y-1/2"></i>
+                <input
+                  type="text"
+                  value="${Utils.escapeHtml(search)}"
+                  oninput="App.updateProductFilter('search', this.value)"
+                  placeholder="Filtrar por nome ou SKU..."
+                  class="w-full h-9 pl-8.5 pr-3 text-xs bg-[#FAFAFA] border border-[#E5E7EB] rounded-lg focus:outline-none focus:bg-white focus:border-[#18181B]"
+                />
+              </div>
+
+              <div class="flex flex-wrap items-center gap-2.5">
+                <select
+                  onchange="App.updateProductFilter('category', this.value)"
+                  class="h-9 px-3 text-xs bg-white border border-[#E5E7EB] rounded-lg text-[#18181B] focus:outline-none focus:border-[#18181B]"
+                >
+                  <option value="all" ${category === 'all' ? 'selected' : ''}>Todas as categorias</option>
+                  ${categories.map(c => `
+                    <option value="${Utils.escapeHtml(c)}" ${category === c ? 'selected' : ''}>${Utils.escapeHtml(c)}</option>
+                  `).join('')}
+                </select>
+
+                <select
+                  onchange="App.updateProductFilter('status', this.value)"
+                  class="h-9 px-3 text-xs bg-white border border-[#E5E7EB] rounded-lg text-[#18181B] focus:outline-none focus:border-[#18181B]"
+                >
+                  <option value="all" ${status === 'all' ? 'selected' : ''}>Todos os status</option>
+                  <option value="normal" ${status === 'normal' ? 'selected' : ''}>Estoque Normal</option>
+                  <option value="low" ${status === 'low' ? 'selected' : ''}>Estoque Baixo</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Products Table -->
+            <div class="bg-white border border-[#E5E7EB] rounded-xl overflow-hidden">
+              <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                  <thead>
+                    <tr class="bg-[#FAFAFA] border-b border-[#E5E7EB] text-[11px] font-medium text-[#71717A]">
+                      <th class="py-3 px-5">Produto / SKU</th>
+                      <th class="py-3 px-4">Categoria</th>
+                      <th class="py-3 px-4">Preço Unitário</th>
+                      <th class="py-3 px-4">Em Estoque</th>
+                      <th class="py-3 px-4">Mínimo</th>
+                      <th class="py-3 px-4">Status</th>
+                      <th class="py-3 px-5 text-right">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-[#F4F4F5] text-xs">
+                    ${filteredProducts.length === 0 ? `
+                      <tr>
+                        <td colspan="7" class="py-10 text-center text-[#71717A]">
+                          Nenhum produto encontrado com os filtros selecionados.
+                        </td>
+                      </tr>
+                    ` : filteredProducts.map(prod => {
+                      const isLow = prod.quantity < prod.minStock;
+                      return `
+                        <tr class="hover:bg-[#FAFAFA] transition-colors">
+                          <td class="py-3.5 px-5">
+                            <div class="font-medium text-[#18181B]">${Utils.escapeHtml(prod.name)}</div>
+                            <div class="text-[11px] font-mono text-[#71717A]">${Utils.escapeHtml(prod.sku)}</div>
+                          </td>
+                          <td class="py-3.5 px-4 text-[#52525B]">
+                            ${Components.renderBadge(prod.category, 'neutral')}
+                          </td>
+                          <td class="py-3.5 px-4 font-medium text-[#18181B]">
+                            ${Utils.formatCurrency(prod.price)}
+                          </td>
+                          <td class="py-3.5 px-4 font-semibold ${isLow ? 'text-amber-700' : 'text-[#18181B]'}">
+                            ${prod.quantity} ${Utils.escapeHtml(prod.unit)}
+                          </td>
+                          <td class="py-3.5 px-4 text-[#71717A]">
+                            ${prod.minStock} ${Utils.escapeHtml(prod.unit)}
+                          </td>
+                          <td class="py-3.5 px-4">
+                            ${isLow
+                              ? Components.renderBadge('Estoque baixo', 'warning')
+                              : Components.renderBadge('Normal', 'neutral')
+                            }
+                          </td>
+                          <td class="py-3.5 px-5 text-right">
+                            <div class="inline-flex items-center justify-end gap-1">
+                              <button
+                                onclick="Components.openMovementModal('${prod.id}', 'entrada')"
+                                title="Registrar movimentação"
+                                class="p-1.5 rounded-lg text-[#52525B] hover:bg-[#F4F4F5] hover:text-[#18181B]"
+                              >
+                                <i data-lucide="arrow-left-right" class="w-4 h-4"></i>
+                              </button>
+                              <button
+                                onclick="Components.openProductModal('${prod.id}')"
+                                title="Editar produto"
+                                class="p-1.5 rounded-lg text-[#52525B] hover:bg-[#F4F4F5] hover:text-[#18181B]"
+                              >
+                                <i data-lucide="pencil" class="w-4 h-4"></i>
+                              </button>
+                              <button
+                                onclick="Components.openDeleteConfirmModal('${prod.id}')"
+                                title="Excluir produto"
+                                class="p-1.5 rounded-lg text-[#52525B] hover:bg-red-50 hover:text-red-600"
+                              >
+                                <i data-lucide="trash-2" class="w-4 h-4"></i>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      `;
+                    }).join('')}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        `;
+      },
+
+      // 4.1.4 MOVIMENTAÇÃO DE ESTOQUE
+      MovementsView() {
+        const { search, type } = Store.state.movementFilters;
+
+        const filteredMovements = Store.state.movements.filter(m => {
+          const matchesSearch =
+            !search ||
+            m.productName.toLowerCase().includes(search.toLowerCase()) ||
+            m.productSku.toLowerCase().includes(search.toLowerCase()) ||
+            m.reference.toLowerCase().includes(search.toLowerCase()) ||
+            m.responsible.toLowerCase().includes(search.toLowerCase());
+          const matchesType = type === 'all' || m.type === type;
+          return matchesSearch && matchesType;
+        });
+
+        const totalIn = Store.state.movements.filter(m => m.type === 'entrada').reduce((s, m) => s + m.quantity, 0);
+        const totalOut = Store.state.movements.filter(m => m.type === 'saida').reduce((s, m) => s + m.quantity, 0);
+
+        return `
+          <div class="space-y-6 fade-in">
+            <!-- Header -->
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div>
+                <h1 class="text-2xl font-bold tracking-tight text-[#18181B]">Movimentações</h1>
+                <p class="text-[13px] text-[#71717A] mt-0.5">Histórico auditável de entradas e saídas de mercadorias.</p>
+              </div>
+              <div class="flex items-center gap-2.5">
+                <button
+                  onclick="Components.openMovementModal('', 'saida')"
+                  class="h-9 px-3.5 bg-white border border-[#E5E7EB] text-[#18181B] rounded-lg text-xs font-medium hover:bg-[#F4F4F5] transition-colors inline-flex items-center gap-1.5"
+                >
+                  <i data-lucide="arrow-up-right" class="w-3.5 h-3.5"></i>
+                  <span>Registrar saída</span>
+                </button>
+                <button
+                  onclick="Components.openMovementModal('', 'entrada')"
+                  class="h-9 px-4 bg-[#18181B] text-white rounded-lg text-xs font-medium hover:bg-[#27272A] transition-colors inline-flex items-center gap-1.5"
+                >
+                  <i data-lucide="arrow-down-left" class="w-3.5 h-3.5"></i>
+                  <span>Registrar entrada</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Summary Mini Cards -->
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div class="bg-white border border-[#E5E7EB] rounded-xl p-4 flex items-center justify-between">
+                <div>
+                  <span class="text-xs text-[#71717A]">Total de registros</span>
+                  <div class="text-xl font-bold text-[#18181B] mt-0.5">${Store.state.movements.length}</div>
+                </div>
+                <div class="w-9 h-9 rounded-lg bg-[#F4F4F5] flex items-center justify-center text-[#18181B]">
+                  <i data-lucide="history" class="w-4 h-4"></i>
+                </div>
+              </div>
+              <div class="bg-white border border-[#E5E7EB] rounded-xl p-4 flex items-center justify-between">
+                <div>
+                  <span class="text-xs text-[#71717A]">Volume de entradas</span>
+                  <div class="text-xl font-bold text-[#18181B] mt-0.5">+${Utils.formatNumber(totalIn)} un.</div>
+                </div>
+                <div class="w-9 h-9 rounded-lg bg-[#F4F4F5] flex items-center justify-center text-[#18181B]">
+                  <i data-lucide="arrow-down-left" class="w-4 h-4"></i>
+                </div>
+              </div>
+              <div class="bg-white border border-[#E5E7EB] rounded-xl p-4 flex items-center justify-between">
+                <div>
+                  <span class="text-xs text-[#71717A]">Volume de saídas</span>
+                  <div class="text-xl font-bold text-[#18181B] mt-0.5">−${Utils.formatNumber(totalOut)} un.</div>
+                </div>
+                <div class="w-9 h-9 rounded-lg bg-[#F4F4F5] flex items-center justify-center text-[#18181B]">
+                  <i data-lucide="arrow-up-right" class="w-4 h-4"></i>
+                </div>
+              </div>
+            </div>
+
+            <!-- Filters -->
+            <div class="bg-white border border-[#E5E7EB] rounded-xl p-4 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+              <div class="relative flex-1 max-w-md">
+                <i data-lucide="search" class="w-3.5 h-3.5 text-[#A1A1AA] absolute left-3 top-1/2 -translate-y-1/2"></i>
+                <input
+                  type="text"
+                  value="${Utils.escapeHtml(search)}"
+                  oninput="App.updateMovementFilter('search', this.value)"
+                  placeholder="Buscar por produto, SKU, referência ou responsável..."
+                  class="w-full h-9 pl-8.5 pr-3 text-xs bg-[#FAFAFA] border border-[#E5E7EB] rounded-lg focus:outline-none focus:bg-white focus:border-[#18181B]"
+                />
+              </div>
+
+              <div class="flex items-center gap-1.5 bg-[#FAFAFA] p-1 rounded-lg border border-[#E5E7EB]">
+                ${[
+                  { id: 'all', label: 'Todas' },
+                  { id: 'entrada', label: 'Entradas' },
+                  { id: 'saida', label: 'Saídas' }
+                ].map(tab => `
+                  <button
+                    onclick="App.updateMovementFilter('type', '${tab.id}')"
+                    class="px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                      type === tab.id ? 'bg-[#18181B] text-white' : 'text-[#52525B] hover:text-[#18181B]'
+                    }"
+                  >
+                    ${tab.label}
+                  </button>
+                `).join('')}
+              </div>
+            </div>
+
+            <!-- Movements Table -->
+            <div class="bg-white border border-[#E5E7EB] rounded-xl overflow-hidden">
+              <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                  <thead>
+                    <tr class="bg-[#FAFAFA] border-b border-[#E5E7EB] text-[11px] font-medium text-[#71717A]">
+                      <th class="py-3 px-5">Produto</th>
+                      <th class="py-3 px-4">Tipo</th>
+                      <th class="py-3 px-4">Quantidade</th>
+                      <th class="py-3 px-4">Responsável</th>
+                      <th class="py-3 px-4">Data e hora</th>
+                      <th class="py-3 px-4">Observação</th>
+                      <th class="py-3 px-5 text-right">Referência</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-[#F4F4F5] text-xs">
+                    ${filteredMovements.length === 0 ? `
+                      <tr>
+                        <td colspan="7" class="py-10 text-center text-[#71717A]">Nenhuma movimentação encontrada.</td>
+                      </tr>
+                    ` : filteredMovements.map(mov => {
+                      const isEntrada = mov.type === 'entrada';
+                      return `
+                        <tr class="hover:bg-[#FAFAFA] transition-colors">
+                          <td class="py-3.5 px-5">
+                            <div class="font-medium text-[#18181B]">${Utils.escapeHtml(mov.productName)}</div>
+                            <div class="text-[11px] font-mono text-[#71717A]">${Utils.escapeHtml(mov.productSku)}</div>
+                          </td>
+                          <td class="py-3.5 px-4">
+                            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium border ${
+                              isEntrada
+                                ? 'bg-[#F4F4F5] text-[#18181B] border-[#E4E4E7]'
+                                : 'bg-white text-[#52525B] border-[#E5E7EB]'
+                            }">
+                              <i data-lucide="${isEntrada ? 'arrow-down' : 'arrow-up'}" class="w-3 h-3"></i>
+                              ${isEntrada ? 'Entrada' : 'Saída'}
+                            </span>
+                          </td>
+                          <td class="py-3.5 px-4 font-semibold text-[#18181B]">
+                            ${isEntrada ? '+' : '−'}${mov.quantity} ${Utils.escapeHtml(mov.unit)}
+                          </td>
+                          <td class="py-3.5 px-4 text-[#52525B]">${Utils.escapeHtml(mov.responsible)}</td>
+                          <td class="py-3.5 px-4 text-[#71717A]">${Utils.escapeHtml(mov.date)}</td>
+                          <td class="py-3.5 px-4 text-[#71717A] max-w-[200px] truncate">${Utils.escapeHtml(mov.notes || '—')}</td>
+                          <td class="py-3.5 px-5 text-right font-mono text-[11px] text-[#52525B]">${Utils.escapeHtml(mov.reference)}</td>
+                        </tr>
+                      `;
+                    }).join('')}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        `;
+      },
+
+      // ALERTAS DE ESTOQUE
+      AlertsView() {
+        const lowItems = Store.getLowStockProducts();
+
+        return `
+          <div class="space-y-6 fade-in">
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div>
+                <h1 class="text-2xl font-bold tracking-tight text-[#18181B]">Alertas de estoque</h1>
+                <p class="text-[13px] text-[#71717A] mt-0.5">Itens operando abaixo do estoque mínimo que requerem reposição prioritária.</p>
+              </div>
+              <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white border border-[#E5E7EB] text-xs font-medium text-[#18181B]">
+                <i data-lucide="alert-triangle" class="w-4 h-4 text-amber-600"></i>
+                <span>${lowItems.length} ${lowItems.length === 1 ? 'item crítico' : 'itens críticos'}</span>
+              </div>
+            </div>
+
+            ${lowItems.length === 0 ? `
+              <div class="bg-white border border-[#E5E7EB] rounded-xl p-12 text-center">
+                <div class="w-12 h-12 rounded-2xl bg-[#F4F4F5] text-[#18181B] flex items-center justify-center mx-auto mb-3">
+                  <i data-lucide="check-circle-2" class="w-6 h-6"></i>
+                </div>
+                <h3 class="text-sm font-semibold text-[#18181B]">Nenhum alerta pendente</h3>
+                <p class="text-xs text-[#71717A] mt-1">Todos os produtos cadastrados estão acima do nível mínimo configurado.</p>
+              </div>
+            ` : `
+              <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                ${lowItems.map(item => {
+                  const deficit = Math.max(0, item.minStock - item.quantity);
+                  const suggestedOrder = Math.max(10, (item.minStock * 2) - item.quantity);
+                  const percent = Math.min(100, Math.round((item.quantity / item.minStock) * 100));
+
+                  return `
+                    <div class="bg-white border border-[#E5E7EB] rounded-xl p-5 flex flex-col justify-between gap-4">
+                      <div>
+                        <div class="flex items-start justify-between gap-2 mb-3">
+                          <span class="font-mono text-[11px] font-medium px-2 py-0.5 rounded bg-[#F4F4F5] text-[#52525B]">
+                            ${Utils.escapeHtml(item.sku)}
+                          </span>
+                          ${Components.renderBadge(`Déficit: ${deficit} ${item.unit}`, 'warning')}
+                        </div>
+                        <h3 class="text-sm font-semibold text-[#18181B]">${Utils.escapeHtml(item.name)}</h3>
+                        <p class="text-xs text-[#71717A] mt-0.5">${Utils.escapeHtml(item.category)}</p>
+
+                        <!-- Progress Bar -->
+                        <div class="mt-4">
+                          <div class="flex items-center justify-between text-xs mb-1.5">
+                            <span class="font-semibold text-[#18181B]">Atual: ${item.quantity} ${item.unit}</span>
+                            <span class="text-[#71717A]">Mínimo: ${item.minStock} ${item.unit}</span>
+                          </div>
+                          <div class="w-full h-2 bg-[#F4F4F5] rounded-full overflow-hidden">
+                            <div class="h-full bg-[#18181B] rounded-full" style="width: ${percent}%"></div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div class="pt-3 border-t border-[#F4F4F5] flex items-center justify-between gap-2">
+                        <span class="text-[11px] text-[#71717A]">Sugestão: +${suggestedOrder} ${item.unit}</span>
+                        <button
+                          onclick="Components.openMovementModal('${item.id}', 'entrada', ${suggestedOrder})"
+                          class="px-3 py-1.5 bg-[#18181B] text-white text-xs font-medium rounded-lg hover:bg-[#27272A] transition-colors inline-flex items-center gap-1.5"
+                        >
+                          <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+                          <span>Repor estoque</span>
+                        </button>
+                      </div>
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+            `}
+          </div>
+        `;
+      },
+
+      // 4.1.5 RELATÓRIOS
+      ReportsView() {
+        const tab = Store.state.reportTab;
+        const products = Store.state.products;
+        const lowProducts = Store.getLowStockProducts();
+        const movements = Store.state.movements;
+
+        const totalStockValue = Store.getTotalStockValue();
+        const totalInQty = movements.filter(m => m.type === 'entrada').reduce((a, b) => a + b.quantity, 0);
+        const totalOutQty = movements.filter(m => m.type === 'saida').reduce((a, b) => a + b.quantity, 0);
+
+        return `
+          <div class="space-y-6 fade-in">
+            <!-- Header -->
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div>
+                <h1 class="text-2xl font-bold tracking-tight text-[#18181B]">Relatórios</h1>
+                <p class="text-[13px] text-[#71717A] mt-0.5">Consolidação analítica do inventário, itens críticos e fluxo operacional.</p>
+              </div>
+              <div class="flex items-center gap-2.5 no-print">
+                <button
+                  onclick="window.print()"
+                  class="h-9 px-3.5 bg-white border border-[#E5E7EB] text-[#18181B] rounded-lg text-xs font-medium hover:bg-[#F4F4F5] transition-colors inline-flex items-center gap-1.5"
+                >
+                  <i data-lucide="printer" class="w-3.5 h-3.5"></i>
+                  <span>Imprimir</span>
+                </button>
+                <button
+                  onclick="App.exportCurrentReportCSV()"
+                  class="h-9 px-4 bg-[#18181B] text-white rounded-lg text-xs font-medium hover:bg-[#27272A] transition-colors inline-flex items-center gap-1.5"
+                >
+                  <i data-lucide="download" class="w-3.5 h-3.5"></i>
+                  <span>Exportar CSV</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Summary KPIs -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              ${Components.renderKpiCard({
+                title: 'Patrimônio em estoque',
+                value: Utils.formatCurrency(totalStockValue),
+                icon: 'wallet',
+                subLeft: `${products.length} SKUs ativos`,
+                subRight: 'Valorizado a custo unitário'
+              })}
+              ${Components.renderKpiCard({
+                title: 'Entradas acumuladas',
+                value: `+${Utils.formatNumber(totalInQty)} un.`,
+                icon: 'arrow-down-left',
+                subLeft: `${movements.filter(m => m.type === 'entrada').length} operações`,
+                subRight: 'Recebimentos'
+              })}
+              ${Components.renderKpiCard({
+                title: 'Saídas acumuladas',
+                value: `−${Utils.formatNumber(totalOutQty)} un.`,
+                icon: 'arrow-up-right',
+                subLeft: `${movements.filter(m => m.type === 'saida').length} operações`,
+                subRight: 'Requisições'
+              })}
+              ${Components.renderKpiCard({
+                title: 'Itens para reposição',
+                value: String(lowProducts.length),
+                icon: 'alert-circle',
+                subLeft: lowProducts.length > 0 ? 'Ação recomendada' : 'Sem pendências',
+                subRight: 'Abaixo do mínimo'
+              })}
+            </div>
+
+            <!-- Report Section Tabs -->
+            <div class="bg-white border border-[#E5E7EB] rounded-xl overflow-hidden">
+              <div class="px-5 pt-4 border-b border-[#E5E7EB] flex flex-wrap items-center justify-between gap-4 no-print">
+                <div class="flex items-center gap-6">
+                  ${[
+                    { id: 'all', label: `Produtos cadastrados (${products.length})` },
+                    { id: 'low', label: `Produtos com estoque baixo (${lowProducts.length})` },
+                    { id: 'summary', label: `Resumo das movimentações (${movements.length})` }
+                  ].map(t => `
+                    <button
+                      onclick="App.setReportTab('${t.id}')"
+                      class="pb-3.5 text-xs font-semibold border-b-2 transition-colors ${
+                        tab === t.id
+                          ? 'border-[#18181B] text-[#18181B]'
+                          : 'border-transparent text-[#71717A] hover:text-[#18181B]'
+                      }"
+                    >
+                      ${t.label}
+                    </button>
+                  `).join('')}
+                </div>
+              </div>
+
+              <!-- Tab 1: Produtos Cadastrados -->
+              ${tab === 'all' ? `
+                <div class="overflow-x-auto">
+                  <table class="w-full text-left border-collapse">
+                    <thead>
+                      <tr class="bg-[#FAFAFA] border-b border-[#E5E7EB] text-[11px] font-medium text-[#71717A]">
+                        <th class="py-3 px-5">SKU</th>
+                        <th class="py-3 px-4">Produto</th>
+                        <th class="py-3 px-4">Categoria</th>
+                        <th class="py-3 px-4 text-right">Qtd. Atual</th>
+                        <th class="py-3 px-4 text-right">Valor Unit.</th>
+                        <th class="py-3 px-5 text-right">Valor Total</th>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-[#F4F4F5] text-xs">
+                      ${products.map(p => `
+                        <tr class="hover:bg-[#FAFAFA]">
+                          <td class="py-3 px-5 font-mono text-[11px] text-[#52525B]">${Utils.escapeHtml(p.sku)}</td>
+                          <td class="py-3 px-4 font-medium text-[#18181B]">${Utils.escapeHtml(p.name)}</td>
+                          <td class="py-3 px-4 text-[#71717A]">${Utils.escapeHtml(p.category)}</td>
+                          <td class="py-3 px-4 text-right font-medium text-[#18181B]">${p.quantity} ${p.unit}</td>
+                          <td class="py-3 px-4 text-right text-[#52525B]">${Utils.formatCurrency(p.price)}</td>
+                          <td class="py-3 px-5 text-right font-semibold text-[#18181B]">${Utils.formatCurrency(p.price * p.quantity)}</td>
+                        </tr>
+                      `).join('')}
+                    </tbody>
+                    <tfoot>
+                      <tr class="bg-[#FAFAFA] border-t border-[#E5E7EB] text-xs font-bold text-[#18181B]">
+                        <td colspan="5" class="py-3 px-5 text-right">Total Consolidado em Estoque:</td>
+                        <td class="py-3 px-5 text-right">${Utils.formatCurrency(totalStockValue)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              ` : ''}
+
+              <!-- Tab 2: Produtos com Estoque Baixo -->
+              ${tab === 'low' ? `
+                <div class="overflow-x-auto">
+                  <table class="w-full text-left border-collapse">
+                    <thead>
+                      <tr class="bg-[#FAFAFA] border-b border-[#E5E7EB] text-[11px] font-medium text-[#71717A]">
+                        <th class="py-3 px-5">SKU</th>
+                        <th class="py-3 px-4">Produto</th>
+                        <th class="py-3 px-4 text-right">Saldo Atual</th>
+                        <th class="py-3 px-4 text-right">Estoque Mínimo</th>
+                        <th class="py-3 px-4 text-right">Déficit</th>
+                        <th class="py-3 px-5 text-right">Custo Est. Reposição</th>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-[#F4F4F5] text-xs">
+                      ${lowProducts.length === 0 ? `
+                        <tr><td colspan="6" class="py-8 text-center text-[#71717A]">Nenhum item abaixo do estoque mínimo.</td></tr>
+                      ` : lowProducts.map(p => {
+                        const deficit = Math.max(0, p.minStock - p.quantity);
+                        return `
+                          <tr class="hover:bg-[#FAFAFA]">
+                            <td class="py-3 px-5 font-mono text-[11px] text-[#52525B]">${Utils.escapeHtml(p.sku)}</td>
+                            <td class="py-3 px-4 font-medium text-[#18181B]">${Utils.escapeHtml(p.name)}</td>
+                            <td class="py-3 px-4 text-right font-semibold text-amber-700">${p.quantity} ${p.unit}</td>
+                            <td class="py-3 px-4 text-right text-[#52525B]">${p.minStock} ${p.unit}</td>
+                            <td class="py-3 px-4 text-right font-semibold text-[#18181B]">${deficit} ${p.unit}</td>
+                            <td class="py-3 px-5 text-right font-medium text-[#18181B]">${Utils.formatCurrency(deficit * p.price)}</td>
+                          </tr>
+                        `;
+                      }).join('')}
+                    </tbody>
+                  </table>
+                </div>
+              ` : ''}
+
+              <!-- Tab 3: Resumo das Movimentações -->
+              ${tab === 'summary' ? `
+                <div class="overflow-x-auto">
+                  <table class="w-full text-left border-collapse">
+                    <thead>
+                      <tr class="bg-[#FAFAFA] border-b border-[#E5E7EB] text-[11px] font-medium text-[#71717A]">
+                        <th class="py-3 px-5">Data e Hora</th>
+                        <th class="py-3 px-4">Referência</th>
+                        <th class="py-3 px-4">Produto</th>
+                        <th class="py-3 px-4">Operação</th>
+                        <th class="py-3 px-4">Responsável</th>
+                        <th class="py-3 px-5 text-right">Quantidade</th>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-[#F4F4F5] text-xs">
+                      ${movements.map(m => `
+                        <tr class="hover:bg-[#FAFAFA]">
+                          <td class="py-3 px-5 text-[#71717A]">${Utils.escapeHtml(m.date)}</td>
+                          <td class="py-3 px-4 font-mono text-[11px] text-[#52525B]">${Utils.escapeHtml(m.reference)}</td>
+                          <td class="py-3 px-4 font-medium text-[#18181B]">${Utils.escapeHtml(m.productName)}</td>
+                          <td class="py-3 px-4">${m.type === 'entrada' ? 'Entrada' : 'Saída'}</td>
+                          <td class="py-3 px-4 text-[#52525B]">${Utils.escapeHtml(m.responsible)}</td>
+                          <td class="py-3 px-5 text-right font-semibold text-[#18181B]">
+                            ${m.type === 'entrada' ? '+' : '−'}${m.quantity} ${m.unit}
+                          </td>
+                        </tr>
+                      `).join('')}
+                    </tbody>
+                  </table>
+                </div>
+              ` : ''}
+            </div>
+          </div>
+        `;
+      }
+    };
+
+    // ============================================================================
+    // 5. APPLICATION CONTROLLER
+    // ============================================================================
+    const App = {
+      init() {
+        Store.init();
+        this.render();
+      },
+
+      render() {
+        const appRoot = document.getElementById('app');
+
+        if (!Store.state.isAuthenticated) {
+          appRoot.innerHTML = Views.LoginView();
+          if (window.lucide) lucide.createIcons();
+          return;
+        }
+
+        let viewHtml = '';
+        switch (Store.state.currentRoute) {
+          case 'products':
+            viewHtml = Views.ProductsView();
+            break;
+          case 'movements':
+            viewHtml = Views.MovementsView();
+            break;
+          case 'alerts':
+            viewHtml = Views.AlertsView();
+            break;
+          case 'reports':
+            viewHtml = Views.ReportsView();
+            break;
+          case 'dashboard':
+          default:
+            viewHtml = Views.DashboardView();
+            break;
+        }
+
+        appRoot.innerHTML = `
+          <div class="min-h-screen flex bg-[#FAFAFA]">
+            ${Components.renderSidebar()}
+            <div class="flex-1 lg:pl-64 flex flex-col min-w-0">
+              ${Components.renderHeader()}
+              <main id="main-content" class="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto">
+                ${viewHtml}
+              </main>
+            </div>
+          </div>
+        `;
+
+        // Restore focus to global search if user was typing
+        if (this._keepSearchFocus) {
+          const input = document.getElementById('global-search-input');
+          if (input) {
+            input.focus();
+            input.setSelectionRange(input.value.length, input.value.length);
+          }
+          this._keepSearchFocus = false;
+        }
+
+        if (window.lucide) lucide.createIcons();
+      },
+
+      // UI Toggles
+      toggleMobileMenu(open) {
+        Store.state.mobileMenuOpen = open;
+        this.render();
+      },
+
+      toggleNotifications() {
+        Store.state.notificationsOpen = !Store.state.notificationsOpen;
+        this.render();
+      },
+
+      // Global Search Handlers
+      onGlobalSearch(value) {
+        Store.state.globalSearch = value;
+        this._keepSearchFocus = true;
+        this.render();
+      },
+
+      handleGlobalSearchSelect(route, filterText) {
+        Store.state.globalSearch = '';
+        if (route === 'products') {
+          Store.state.productFilters.search = filterText;
+        } else if (route === 'movements') {
+          Store.state.movementFilters.search = filterText;
+        }
+        Store.navigate(route);
+      },
+
+      // Filter Handlers
+      updateProductFilter(key, value) {
+        Store.state.productFilters[key] = value;
+        this.render();
+      },
+
+      updateMovementFilter(key, value) {
+        Store.state.movementFilters[key] = value;
+        this.render();
+      },
+
+      setReportTab(tabId) {
+        Store.state.reportTab = tabId;
+        this.render();
+      },
+
+      // Auth Handlers
+      fillDemoCredentials() {
+        const emailEl = document.getElementById('login-email');
+        const passEl = document.getElementById('login-password');
+        if (emailEl) emailEl.value = 'admin@smartstock.com.br';
+        if (passEl) passEl.value = '123456';
+      },
+
+      togglePasswordVisibility() {
+        const passEl = document.getElementById('login-password');
+        const eyeIcon = document.getElementById('password-eye-icon');
+        if (!passEl) return;
+        const isPass = passEl.type === 'password';
+        passEl.type = isPass ? 'text' : 'password';
+        if (eyeIcon) {
+          eyeIcon.setAttribute('data-lucide', isPass ? 'eye-off' : 'eye');
+          if (window.lucide) lucide.createIcons();
+        }
+      },
+
+      handleLoginSubmit(event) {
+        event.preventDefault();
+        const formData = new FormData(event.target);
+        const email = String(formData.get('email') || '').trim();
+        const password = String(formData.get('password') || '').trim();
+        const errorBox = document.getElementById('login-error');
+
+        if (!email || !email.includes('@') || password.length < 4) {
+          if (errorBox) {
+            errorBox.textContent = 'Por favor, informe um e-mail válido e uma senha com pelo menos 4 caracteres.';
+            errorBox.classList.remove('hidden');
+          }
+          return;
+        }
+
+        Store.login(email);
+        Components.showToast('Bem-vindo ao SmartStock!');
+      },
+
+      // Form Submissions
+      handleProductFormSubmit(event, productId) {
+        event.preventDefault();
+        const formData = new FormData(event.target);
+        const payload = {
+          name: formData.get('name'),
+          sku: formData.get('sku'),
+          category: formData.get('category'),
+          price: formData.get('price'),
+          quantity: formData.get('quantity'),
+          minStock: formData.get('minStock'),
+          unit: formData.get('unit')
+        };
+
+        if (productId) {
+          Store.updateProduct(productId, payload);
+        } else {
+          Store.addProduct(payload);
+        }
+        Components.closeModal();
+      },
+
+      handleMovementFormSubmit(event) {
+        event.preventDefault();
+        const formData = new FormData(event.target);
+        const result = Store.registerMovement({
+          productId: formData.get('productId'),
+          type: formData.get('type'),
+          quantity: formData.get('quantity'),
+          responsible: formData.get('responsible'),
+          reference: formData.get('reference'),
+          notes: formData.get('notes')
+        });
+
+        if (!result.ok) {
+          const errBox = document.getElementById('movement-error-box');
+          if (errBox) {
+            errBox.textContent = result.error;
+            errBox.classList.remove('hidden');
+          }
+          return;
+        }
+
+        Components.closeModal();
+      },
+
+      // CSV Exports
+      exportDashboardCSV() {
+        const headers = ['SKU', 'Produto', 'Categoria', 'Quantidade', 'Unidade', 'Estoque Minimo', 'Preco Unitario', 'Valor Total'];
+        const rows = Store.state.products.map(p => [
+          p.sku,
+          p.name,
+          p.category,
+          p.quantity,
+          p.unit,
+          p.minStock,
+          p.price.toFixed(2),
+          (p.price * p.quantity).toFixed(2)
+        ]);
+        Utils.downloadCSV('smartstock_inventario_geral.csv', headers, rows);
+        Components.showToast('Relatório CSV exportado com sucesso.');
+      },
+
+      exportCurrentReportCSV() {
+        const tab = Store.state.reportTab;
+        if (tab === 'low') {
+          const headers = ['SKU', 'Produto', 'Saldo Atual', 'Estoque Minimo', 'Deficit'];
+          const rows = Store.getLowStockProducts().map(p => [
+            p.sku,
+            p.name,
+            p.quantity,
+            p.minStock,
+            Math.max(0, p.minStock - p.quantity)
+          ]);
+          Utils.downloadCSV('smartstock_estoque_baixo.csv', headers, rows);
+        } else if (tab === 'summary') {
+          const headers = ['Data', 'Referencia', 'SKU', 'Produto', 'Tipo', 'Quantidade', 'Responsavel'];
+          const rows = Store.state.movements.map(m => [
+            m.date,
+            m.reference,
+            m.productSku,
+            m.productName,
+            m.type,
+            m.quantity,
+            m.responsible
+          ]);
+          Utils.downloadCSV('smartstock_movimentacoes.csv', headers, rows);
+        } else {
+          this.exportDashboardCSV();
+          return;
+        }
+        Components.showToast('Arquivo CSV gerado e baixado.');
+      }
+    };
+
+    // Bootstrap Application
+    window.addEventListener('DOMContentLoaded', () => {
+      App.init();
+    });
+  </script>
+</body>
+</html>
